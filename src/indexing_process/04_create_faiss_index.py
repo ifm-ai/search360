@@ -97,24 +97,31 @@ def sample_embeddings_for_training(
 
     per_file_sample = max(1, sample_size // len(passage_filenames))
 
-    print(f"Sampling ~{per_file_sample:,} embeddings per file from {len(passage_filenames)} files")
+    print(
+        f"Sampling ~{per_file_sample:,} embeddings per file from {len(passage_filenames)} files"
+    )
     print(f"Using {n_workers} parallel workers for loading")
 
     # Prepare tasks
     tasks = []
     for passage_filename in passage_filenames:
-        embedding_filename = passage_filename.replace("_passages.jsonl", "_embeddings.pkl")
+        embedding_filename = passage_filename.replace(
+            "_passages.jsonl", "_embeddings.pkl"
+        )
         embedding_path = embeddings_dir / embedding_filename
         tasks.append((embedding_path, per_file_sample))
 
     # Load and sample in parallel
     from multiprocessing import Pool
+
     with Pool(n_workers) as pool:
-        sampled_embeddings = list(tqdm(
-            pool.imap(load_and_sample_file, tasks),
-            total=len(tasks),
-            desc="Sampling files in parallel"
-        ))
+        sampled_embeddings = list(
+            tqdm(
+                pool.imap(load_and_sample_file, tasks),
+                total=len(tasks),
+                desc="Sampling files in parallel",
+            )
+        )
 
     sampled_embeddings = np.concatenate(sampled_embeddings, axis=0).astype(np.float32)
 

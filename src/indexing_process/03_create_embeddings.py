@@ -140,7 +140,9 @@ def main(args):
         print(f"  Job ID: {args.job_id}")
         print(f"  Total jobs: {args.total_jobs}")
         print(f"  Total files: {total_files}")
-        print(f"  This job processes files: [{start_idx}:{end_idx}] ({len(passage_filenames)} files)")
+        print(
+            f"  This job processes files: [{start_idx}:{end_idx}] ({len(passage_filenames)} files)"
+        )
 
     print(f"\nConfiguration:")
     print(f"  Passages dir: {passages_dir}")
@@ -260,14 +262,14 @@ if __name__ == "__main__":
         "--job_id",
         type=int,
         default=None,
-        help="Job ID for parallel processing (0-indexed). Use with --total_jobs"
+        help="Job ID for parallel processing (0-indexed). Use with --total_jobs",
     )
 
     parser.add_argument(
         "--total_jobs",
         type=int,
         default=None,
-        help="Total number of parallel jobs. Use with --job_id"
+        help="Total number of parallel jobs. Use with --job_id",
     )
 
     args = parser.parse_args()

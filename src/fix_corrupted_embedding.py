@@ -53,9 +53,9 @@ def mean_pooling(token_embeddings, mask):
 
 
 def main(args):
-    print("="*80)
+    print("=" * 80)
     print("REGENERATE CORRUPTED EMBEDDING")
-    print("="*80)
+    print("=" * 80)
 
     # Setup paths
     passage_file = Path(args.passage_file)
@@ -67,7 +67,9 @@ def main(args):
         # Auto-generate output path
         embeddings_dir = Path(args.embeddings_dir)
         embeddings_dir.mkdir(parents=True, exist_ok=True)
-        embedding_filename = passage_file.name.replace("_passages.jsonl", "_embeddings.pkl")
+        embedding_filename = passage_file.name.replace(
+            "_passages.jsonl", "_embeddings.pkl"
+        )
         output_file = embeddings_dir / embedding_filename
 
     print(f"\nInput: {passage_file}")
@@ -131,55 +133,48 @@ def main(args):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Regenerate embeddings for corrupted passage file")
+    parser = argparse.ArgumentParser(
+        description="Regenerate embeddings for corrupted passage file"
+    )
 
     parser.add_argument(
-        "--passage_file",
-        type=str,
-        required=True,
-        help="Path to the passage JSONL file"
+        "--passage_file", type=str, required=True, help="Path to the passage JSONL file"
     )
 
     parser.add_argument(
         "--output_file",
         type=str,
         default=None,
-        help="Output pickle file path (auto-generated if not specified)"
+        help="Output pickle file path (auto-generated if not specified)",
     )
 
     parser.add_argument(
         "--embeddings_dir",
         type=str,
         default="/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_data/outputs/embeddings",
-        help="Directory to save embeddings (used if output_file not specified)"
+        help="Directory to save embeddings (used if output_file not specified)",
     )
 
     parser.add_argument(
         "--model_name",
         type=str,
         default="facebook/contriever",
-        help="HuggingFace model name"
+        help="HuggingFace model name",
     )
 
     parser.add_argument(
         "--batch_size",
         type=int,
         default=8192,
-        help="Batch size for embedding generation"
+        help="Batch size for embedding generation",
     )
 
     parser.add_argument(
-        "--max_length",
-        type=int,
-        default=128,
-        help="Maximum sequence length"
+        "--max_length", type=int, default=128, help="Maximum sequence length"
     )
 
     parser.add_argument(
-        "--num_workers",
-        type=int,
-        default=32,
-        help="Number of DataLoader workers"
+        "--num_workers", type=int, default=32, help="Number of DataLoader workers"
     )
 
     args = parser.parse_args()

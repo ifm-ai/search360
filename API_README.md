@@ -20,6 +20,7 @@ python api.py
 ### 2. Start the server (GPU):
 ```bash
 python api.py --use_gpu
+python -m api.server --use_gpu
 ```
 
 ### 3. Custom configuration:
@@ -90,10 +91,13 @@ curl -X POST http://0.0.0.0:8000/search \
 Retrieve a document by document ID.
 
 **Request:**
-```json
-{
-  "doc_id": 456
-}
+```bash
+curl -X POST http://0.0.0.0:8000/get_document \
+  -H "Content-Type: application/json" \
+  -d '{
+    "doc_id": 33015280
+  }' \
+  | jq .
 ```
 
 **Response:**

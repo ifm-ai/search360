@@ -25,9 +25,9 @@ def convert_parquet_to_jsonl(args):
         records = table.to_pylist()
 
         # Write to JSONL
-        with open(output_path, 'w') as f:
+        with open(output_path, "w") as f:
             for record in records:
-                f.write(json.dumps(record) + '\n')
+                f.write(json.dumps(record) + "\n")
 
         return f"✓ {output_path}"
     except Exception as e:
@@ -42,13 +42,13 @@ def main():
         "--input",
         type=str,
         default="hq_parquets",
-        help="Input directory containing parquet files (default: hq_parquets)"
+        help="Input directory containing parquet files (default: hq_parquets)",
     )
     parser.add_argument(
         "--output",
         type=str,
         default="documents_jsonl",
-        help="Output directory for JSONL files (default: documents_jsonl)"
+        help="Output directory for JSONL files (default: documents_jsonl)",
     )
     args = parser.parse_args()
 
@@ -76,11 +76,13 @@ def main():
 
     # Process in parallel with progress bar
     with Pool(cpu_count()) as pool:
-        results = list(tqdm(
-            pool.imap(convert_parquet_to_jsonl, tasks),
-            total=len(tasks),
-            desc="Converting parquet to JSONL"
-        ))
+        results = list(
+            tqdm(
+                pool.imap(convert_parquet_to_jsonl, tasks),
+                total=len(tasks),
+                desc="Converting parquet to JSONL",
+            )
+        )
 
     # Print results
     print("\nConversion complete!")

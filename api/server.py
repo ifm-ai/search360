@@ -78,7 +78,7 @@ class StatsResponse(BaseModel):
 app = FastAPI(
     title="FAISS Passage Retrieval API",
     description="Search engine for retrieving passages and documents from FAISS index",
-    version="1.0.0"
+    version="1.0.0",
 )
 
 
@@ -99,7 +99,7 @@ async def health_check():
     """Health check endpoint."""
     return {
         "status": "healthy" if SEARCH_SYSTEM is not None else "not_ready",
-        "index_loaded": SEARCH_SYSTEM is not None
+        "index_loaded": SEARCH_SYSTEM is not None,
     }
 
 
@@ -110,10 +110,10 @@ async def get_stats():
         raise HTTPException(status_code=503, detail="System not loaded")
 
     return {
-        "total_passages": int(SEARCH_SYSTEM['index'].ntotal),
-        "total_documents": len(SEARCH_SYSTEM['doc_id_to_file_id']),
-        "num_passage_files": len(SEARCH_SYSTEM['passage_filenames']),
-        "num_document_files": len(SEARCH_SYSTEM['doc_filenames'])
+        "total_passages": int(SEARCH_SYSTEM["index"].ntotal),
+        "total_documents": len(SEARCH_SYSTEM["doc_id_to_file_id"]),
+        "num_passage_files": len(SEARCH_SYSTEM["passage_filenames"]),
+        "num_document_files": len(SEARCH_SYSTEM["doc_filenames"]),
     }
 
 
@@ -144,20 +144,17 @@ async def search(request: SearchRequest):
         return {
             "query": request.query,
             "results": [],
-            "documents": [] if request.return_fulltext else None
+            "documents": [] if request.return_fulltext else None,
         }
 
     # Create query embedding
     query_embedding = embed_query(
-        request.query,
-        SEARCH_SYSTEM['model'],
-        SEARCH_SYSTEM['tokenizer']
+        request.query, SEARCH_SYSTEM["model"], SEARCH_SYSTEM["tokenizer"]
     )
 
     # Search index
-    scores, passage_ids = SEARCH_SYSTEM['index'].search(
-        query_embedding.astype(np.float32),
-        request.k
+    scores, passage_ids = SEARCH_SYSTEM["index"].search(
+        query_embedding.astype(np.float32), request.k
     )
 
     # Retrieve passages and documents
@@ -169,32 +166,29 @@ async def search(request: SearchRequest):
         passage, psg_filename, psg_position = get_passage(passage_id, SEARCH_SYSTEM)
 
         # Get source document
-        doc_id = SEARCH_SYSTEM['passage_to_doc_id'][passage_id]
+        doc_id = SEARCH_SYSTEM["passage_to_doc_id"][passage_id]
 
         result = {
-            'rank': i + 1,
-            'score': float(score),
-            'passage_id': int(passage_id),
-            'passage_text': passage['text'],
-            'passage_file': psg_filename,
-            'passage_position': int(psg_position),
-            'doc_id': int(doc_id)
+            "rank": i + 1,
+            "score": float(score),
+            "passage_id": int(passage_id),
+            "passage_text": passage["text"],
+            "passage_file": psg_filename,
+            "passage_position": int(psg_position),
+            "doc_id": int(doc_id),
         }
 
         # If return_fulltext, also fetch document
         if request.return_fulltext:
             document, doc_filename, doc_position = get_document(doc_id, SEARCH_SYSTEM)
-            result['doc_text'] = document.get('text', '')
-            result['doc_file'] = doc_filename
-            result['doc_position'] = int(doc_position)
+            result["doc_text"] = document.get("text", "")
+            result["doc_file"] = doc_filename
+            result["doc_position"] = int(doc_position)
 
         passage_results.append(result)
 
     # Prepare response
-    response = {
-        "query": request.query,
-        "results": passage_results
-    }
+    response = {"query": request.query, "results": passage_results}
 
     # Rank documents if requested
     if request.return_fulltext:
@@ -219,10 +213,9 @@ async def get_document_by_id(request: GetDocumentRequest):
         raise HTTPException(status_code=503, detail="System not loaded")
 
     # Validate doc_id
-    if request.doc_id < 0 or request.doc_id >= len(SEARCH_SYSTEM['doc_id_to_file_id']):
+    if request.doc_id < 0 or request.doc_id >= len(SEARCH_SYSTEM["doc_id_to_file_id"]):
         raise HTTPException(
-            status_code=404,
-            detail=f"Document ID {request.doc_id} not found"
+            status_code=404, detail=f"Document ID {request.doc_id} not found"
         )
 
     # Get document
@@ -230,9 +223,9 @@ async def get_document_by_id(request: GetDocumentRequest):
 
     return {
         "doc_id": request.doc_id,
-        "doc_text": document.get('text', ''),
+        "doc_text": document.get("text", ""),
         "doc_file": doc_filename,
-        "doc_position": int(doc_position)
+        "doc_position": int(doc_position),
     }
 
 
@@ -243,70 +236,54 @@ def main():
         "--index_path",
         type=str,
         default="/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_data/outputs/index_faiss/final_index.faiss",
-        help="Path to FAISS index"
+        help="Path to FAISS index",
     )
 
     parser.add_argument(
         "--output_dir",
         type=str,
         default="/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_data/outputs",
-        help="Directory containing mappings"
+        help="Directory containing mappings",
     )
 
     parser.add_argument(
         "--passages_dir",
         type=str,
         default="/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_data/outputs/passages",
-        help="Directory containing passage JSONL files"
+        help="Directory containing passage JSONL files",
     )
 
     parser.add_argument(
         "--documents_dir",
         type=str,
         default="/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_data/outputs/documents_jsonl",
-        help="Directory containing document JSONL files"
+        help="Directory containing document JSONL files",
     )
 
     parser.add_argument(
         "--model_name",
         type=str,
         default="facebook/contriever",
-        help="HuggingFace model name"
+        help="HuggingFace model name",
     )
 
     parser.add_argument(
-        "--nprobe",
-        type=int,
-        default=2048,
-        help="Number of clusters to probe"
+        "--nprobe", type=int, default=2048, help="Number of clusters to probe"
     )
 
     parser.add_argument(
         "--use_gpu",
         action="store_true",
         default=False,
-        help="Use GPU(s) for FAISS search"
+        help="Use GPU(s) for FAISS search",
     )
 
-    parser.add_argument(
-        "--host",
-        type=str,
-        default="0.0.0.0",
-        help="Server host"
-    )
+    parser.add_argument("--host", type=str, default="0.0.0.0", help="Server host")
+
+    parser.add_argument("--port", type=int, default=8000, help="Server port")
 
     parser.add_argument(
-        "--port",
-        type=int,
-        default=8000,
-        help="Server port"
-    )
-
-    parser.add_argument(
-        "--workers",
-        type=int,
-        default=1,
-        help="Number of worker processes"
+        "--workers", type=int, default=1, help="Number of worker processes"
     )
 
     args = parser.parse_args()
@@ -315,23 +292,18 @@ def main():
     app.state.args = args
 
     # Print configuration
-    print("="*80)
+    print("=" * 80)
     print("FAISS API SERVER")
-    print("="*80)
+    print("=" * 80)
     print(f"Index: {args.index_path}")
     print(f"Using GPU: {args.use_gpu}")
     print(f"Host: {args.host}")
     print(f"Port: {args.port}")
     print(f"Workers: {args.workers}")
-    print("="*80)
+    print("=" * 80)
 
     # Run server
-    uvicorn.run(
-        app,
-        host=args.host,
-        port=args.port,
-        workers=args.workers
-    )
+    uvicorn.run(app, host=args.host, port=args.port, workers=args.workers)
 
 
 if __name__ == "__main__":

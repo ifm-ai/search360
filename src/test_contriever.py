@@ -3,6 +3,7 @@ from transformers import AutoTokenizer, AutoModel
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
+
 class SentenceDataset(Dataset):
     def __init__(self, sentences, tokenizer, max_length=512):
         self.sentences = sentences
