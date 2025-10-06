@@ -164,7 +164,7 @@ Generates:
 - Total documents: 145M
 - Index type: IVFPQ (4096 clusters, 16 subquantizers, 8-bit codes)
 
-### Load Test Results (16 workers, without fulltext)
+### Load Test Results (16 workers, with and without fulltext)
 
 **Latency and Throughput:**
 
