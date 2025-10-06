@@ -5,6 +5,9 @@ Creates passages from documents and builds mappings:
 - Merges last passage with second-to-last if < 64 tokens
 - Creates passage_to_doc_id mapping (passage_id -> doc_id)
 - Creates passage lookup arrays (passage_filenames, passage_id_to_file_id, passage_pos_id_array)
+
+
+This step took around 7 hours to finish on 128 cores for total documents of 144996131
 """
 
 import json
@@ -18,7 +21,17 @@ import os
 from pathlib import Path
 
 # Set cache to current working directory
-os.environ['HF_HOME'] = os.getcwd()
+os.environ["HF_HOME"] = os.getcwd()
+
+# Global tokenizer for worker processes
+_worker_tokenizer = None
+
+
+def init_worker(tokenizer_name):
+    """Initialize worker with tokenizer (called once per worker)."""
+    global _worker_tokenizer
+    _worker_tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+
 
 def chunk_text(text, tokenizer, chunk_size=128, min_last_chunk=64):
     """
@@ -51,24 +64,30 @@ def chunk_text(text, tokenizer, chunk_size=128, min_last_chunk=64):
 
 
 def process_document_file(args):
-    """Process a single document JSONL file and create passages."""
+    """Process a single document JSONL file and create passages - streaming to disk."""
+    global _worker_tokenizer
+
     (
         doc_filepath,
         start_doc_id,
-        tokenizer_name,
         chunk_size,
         min_last_chunk,
+        output_passages_path,
     ) = args
 
-    tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+    # Use the pre-loaded tokenizer from worker init
+    tokenizer = _worker_tokenizer
 
-    passages = []
     passage_to_doc_ids = []
+    passage_positions = []
 
-    with open(doc_filepath, "r", encoding="utf-8") as f:
+    with open(doc_filepath, "r", encoding="utf-8") as f_in, open(
+        output_passages_path, "w", encoding="utf-8"
+    ) as f_out:
+
         doc_id = start_doc_id
 
-        for line in f:
+        for line in f_in:
             if not line.strip():
                 continue
 
@@ -78,14 +97,19 @@ def process_document_file(args):
             # Chunk the document
             chunks = chunk_text(text, tokenizer, chunk_size, min_last_chunk)
 
-            # Create passage objects
+            # Write passage objects directly to file
             for chunk in chunks:
-                passages.append({"text": chunk, "doc_id": doc_id})
+                position = f_out.tell()
+                f_out.write(json.dumps({"text": chunk, "doc_id": doc_id}) + "\n")
+
                 passage_to_doc_ids.append(doc_id)
+                passage_positions.append(position)
 
             doc_id += 1
 
-    return passages, np.array(passage_to_doc_ids, dtype=np.int64)
+    return np.array(passage_to_doc_ids, dtype=np.int64), np.array(
+        passage_positions, dtype=np.int64
+    )
 
 
 def count_documents(doc_dir):
@@ -144,15 +168,31 @@ def create_passages_and_mappings(
     print(f"Total documents: {sum(doc_counts)}")
     print(f"Processing {len(doc_files)} document files using {n_workers} workers...")
 
-    # Prepare tasks
+    # Pre-create passage output file paths
+    passage_filenames = []
+    passage_output_paths = []
+
+    for filepath in doc_files:
+        doc_filename = filepath.stem
+        passage_filename = f"{doc_filename}_passages.jsonl"
+        passage_filepath = passages_dir / passage_filename
+
+        passage_filenames.append(passage_filename)
+        passage_output_paths.append(str(passage_filepath))
+
+    # Prepare tasks with output paths (no tokenizer_name in args anymore)
     tasks = [
-        (filepath, start_doc_id, tokenizer_name, chunk_size, min_last_chunk)
-        for filepath, start_doc_id in zip(doc_files, start_doc_ids)
+        (filepath, start_doc_id, chunk_size, min_last_chunk, output_path)
+        for filepath, start_doc_id, output_path in zip(
+            doc_files, start_doc_ids, passage_output_paths
+        )
     ]
 
-    # Process documents in parallel to create passages
-    print("\nStep 2: Creating passages from documents...")
-    with Pool(n_workers) as pool:
+    # Process documents in parallel - passages written directly to disk
+    print("\nStep 2: Creating passages and streaming to disk...")
+    from functools import partial
+
+    with Pool(n_workers, initializer=init_worker, initargs=(tokenizer_name,)) as pool:
         results = list(
             tqdm(
                 pool.imap(process_document_file, tasks),
@@ -161,44 +201,31 @@ def create_passages_and_mappings(
             )
         )
 
-    # Write passages to JSONL files and build mappings
-    print("\nStep 3: Writing passages and building mappings...")
+    # Build mappings from results (only small arrays, no passage text)
+    print("\nStep 3: Building mappings from results...")
 
-    passage_filenames = []
     all_passage_to_doc_ids = []
     all_passage_file_ids = []
     all_passage_positions = []
 
-    for file_id, (passages, passage_to_doc_ids) in enumerate(
-        tqdm(results, desc="Writing passages")
+    for file_id, (passage_to_doc_ids, passage_positions) in enumerate(
+        tqdm(results, desc="Building mappings")
     ):
-        if len(passages) == 0:
+        if len(passage_to_doc_ids) == 0:
             continue
 
-        # Create passage filename based on original document filename
-        doc_filename = doc_files[file_id].stem
-        passage_filename = f"{doc_filename}_passages.jsonl"
-        passage_filepath = passages_dir / passage_filename
+        # Track which file these passages belong to
+        file_ids = np.full(len(passage_to_doc_ids), file_id, dtype=np.int32)
 
-        passage_filenames.append(passage_filename)
-
-        # Write passages and track positions
-        with open(passage_filepath, "w", encoding="utf-8") as f:
-            for passage in passages:
-                position = f.tell()
-                f.write(json.dumps(passage) + "\n")
-
-                all_passage_file_ids.append(file_id)
-                all_passage_positions.append(position)
-
-        # Track passage to document mappings
+        all_passage_file_ids.append(file_ids)
+        all_passage_positions.append(passage_positions)
         all_passage_to_doc_ids.append(passage_to_doc_ids)
 
     # Convert to numpy arrays
     print("\nStep 4: Creating numpy arrays...")
     passage_filenames_array = np.array(passage_filenames, dtype=object)
-    passage_id_to_file_id = np.array(all_passage_file_ids, dtype=np.int32)
-    passage_pos_id_array = np.array(all_passage_positions, dtype=np.int64)
+    passage_id_to_file_id = np.concatenate(all_passage_file_ids)
+    passage_pos_id_array = np.concatenate(all_passage_positions)
     passage_to_doc_id = np.concatenate(all_passage_to_doc_ids)
 
     # Save all mappings
@@ -222,8 +249,6 @@ def create_passages_and_mappings(
         "passage_pos_id_array": passage_pos_id_array,
         "passage_to_doc_id": passage_to_doc_id,
     }
-
-
 
 
 def test_passage_to_document_lookup(
@@ -271,10 +296,8 @@ def test_passage_to_document_lookup(
 
 if __name__ == "__main__":
     # Directories
-    document_dir = (
-        "/mnt/weka/home/shaurya.rohatgi/projects/faster_index/outputs/documents_jsonl/"
-    )
-    output_dir = "/mnt/weka/home/shaurya.rohatgi/projects/faster_index/outputs/"
+    document_dir = "/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_full"
+    output_dir = "/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_full_output"
 
     # Create passages and mappings
     passage_mappings = create_passages_and_mappings(
