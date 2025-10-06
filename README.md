@@ -154,14 +154,31 @@ Generates:
 
 ## Performance
 
-**GPU (8 GPUs):**
+**GPU (8 H200 GPUs, 16 workers):**
 - Search: ~10-50ms per query
 - Startup: ~30-60 seconds (loading index + model)
+- Throughput: Up to 50+ req/s at concurrency=50
 
 **Index Stats:**
 - Total passages: 1.6B
 - Total documents: 145M
 - Index type: IVFPQ (4096 clusters, 16 subquantizers, 8-bit codes)
+
+### Load Test Results (16 workers, without fulltext)
+
+**Latency and Throughput:**
+
+![Load Test Results](load_test_results_16_workers/load_test_results.png)
+
+**Latency Distributions:**
+
+![Latency Distributions](load_test_results_16_workers/latency_distributions.png)
+
+Key metrics from load testing:
+- **p95 latency**: ~0.5-1 sec (depending on concurrency)
+- **p99 latency**: ~1-2 sec (depending on concurrency)
+- **Throughput**: Scales well with concurrency (1→50 concurrent requests)
+- **Success rate**: 100% across all concurrency levels
 
 ## SLURM Integration
 
