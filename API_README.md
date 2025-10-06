@@ -285,3 +285,133 @@ Run in development mode:
 ```bash
 uvicorn api:app --reload --host 0.0.0.0 --port 8000
 ```
+
+
+## Some stats
+
+For 8 workers, the service is using 303GB of memory and 54GB VRAM per GPU.
+For 16 workers, the service will use 600GB of memory and 108GB VRAM per GPU.
+
+This is doable. Lets test this.
+
+## Running with SLURM
+
+### Starting the service
+
+Submit the service to SLURM:
+```bash
+sbatch slurm_start_service.sh
+```
+
+The script will:
+1. Request a full node (8 GPUs, 1024GB RAM, 128 CPUs)
+2. Start the FastAPI service with 16 workers
+3. Create a server info file at `runtime/server_info_<job_id>.json`
+4. Poll the health endpoint until ready
+5. Run until manually stopped or time limit reached
+
+### Server Info File
+
+The SLURM script creates a JSON file to track server status:
+
+**Location:** `runtime/server_info_<job_id>.json`
+
+**Format:**
+```json
+{
+  "host": "fs-mbz-gpu-757",
+  "port": 8000,
+  "url": "http://fs-mbz-gpu-757:8000",
+  "job_id": "12345",
+  "status": "ready",
+  "started_at": "2025-10-06T10:30:00+00:00",
+  "ready_at": "2025-10-06T10:31:45+00:00"
+}
+```
+
+**Status values:**
+- `loading`: Server is starting up, index being loaded
+- `ready`: Server is ready to accept requests
+
+The file is automatically deleted when the job ends.
+
+### Using the server info from another script
+
+**Python example:**
+```python
+import json
+import time
+from pathlib import Path
+
+def wait_for_server(job_id, timeout=300):
+    """Wait for server to be ready and return connection info."""
+    server_file = Path(f"runtime/server_info_{job_id}.json")
+
+    start = time.time()
+    while time.time() - start < timeout:
+        if server_file.exists():
+            with open(server_file) as f:
+                info = json.load(f)
+                if info["status"] == "ready":
+                    print(f"Server ready at: {info['url']}")
+                    return info
+                else:
+                    print(f"Server status: {info['status']}, waiting...")
+        time.sleep(2)
+
+    raise TimeoutError(f"Server not ready after {timeout}s")
+
+# Usage
+job_id = "12345"  # From sbatch output
+server_info = wait_for_server(job_id)
+url = server_info["url"]
+
+# Now you can make requests
+import requests
+response = requests.post(
+    f"{url}/search",
+    json={"query": "What is machine learning?", "k": 10}
+)
+```
+
+**Bash example:**
+```bash
+#!/bin/bash
+JOB_ID=$1
+SERVER_FILE="runtime/server_info_${JOB_ID}.json"
+
+# Wait for server to be ready
+echo "Waiting for server..."
+while [ ! -f "$SERVER_FILE" ] || [ "$(jq -r '.status' $SERVER_FILE)" != "ready" ]; do
+    sleep 2
+done
+
+# Extract URL
+URL=$(jq -r '.url' $SERVER_FILE)
+echo "Server ready at: $URL"
+
+# Make request
+curl -X POST "$URL/search" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "What is machine learning?", "k": 10}'
+```
+
+### Finding running servers
+
+List all active server info files:
+```bash
+ls -la runtime/server_info_*.json
+```
+
+Check status of a specific job:
+```bash
+cat runtime/server_info_12345.json | jq .
+```
+
+### Stopping the service
+
+```bash
+scancel <job_id>
+```
+
+The cleanup trap will automatically remove the server info file. 
