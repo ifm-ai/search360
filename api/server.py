@@ -4,7 +4,9 @@ FastAPI service for FAISS-based passage retrieval.
 """
 
 import argparse
+import os
 import uvicorn
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict
@@ -17,6 +19,51 @@ import numpy as np
 # Global system state (loaded on startup)
 SEARCH_SYSTEM = None
 MAX_K = 100
+
+
+def get_default_args():
+    """Get default arguments from environment variables or hardcoded defaults."""
+    class Args:
+        def __init__(self):
+            self.index_path = os.getenv(
+                "INDEX_PATH",
+                "/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_data/outputs/index_faiss/final_index.faiss"
+            )
+            self.output_dir = os.getenv(
+                "OUTPUT_DIR",
+                "/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_data/outputs"
+            )
+            self.passages_dir = os.getenv(
+                "PASSAGES_DIR",
+                "/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_data/outputs/passages"
+            )
+            self.documents_dir = os.getenv(
+                "DOCUMENTS_DIR",
+                "/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_data/outputs/documents_jsonl"
+            )
+            self.model_name = os.getenv("MODEL_NAME", "facebook/contriever")
+            self.nprobe = int(os.getenv("NPROBE", "2048"))
+            self.use_gpu = os.getenv("USE_GPU", "true").lower() == "true"
+
+    return Args()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Load search system on startup, cleanup on shutdown."""
+    global SEARCH_SYSTEM
+    print("Loading search system...")
+
+    # Get args from app state if available, otherwise use defaults
+    args = getattr(app.state, "args", None) or get_default_args()
+    SEARCH_SYSTEM = load_search_system(args)
+
+    print(f"✓ System loaded: {SEARCH_SYSTEM['index'].ntotal:,} passages")
+
+    yield
+
+    # Cleanup on shutdown (if needed)
+    print("Shutting down search system...")
 
 
 # Request/Response models
@@ -79,19 +126,8 @@ app = FastAPI(
     title="FAISS Passage Retrieval API",
     description="Search engine for retrieving passages and documents from FAISS index",
     version="1.0.0",
+    lifespan=lifespan
 )
-
-
-@app.on_event("startup")
-async def startup_event():
-    """Load search system on startup."""
-    global SEARCH_SYSTEM
-    print("Loading search system...")
-
-    # Get args from global config (set in main)
-    SEARCH_SYSTEM = load_search_system(app.state.args)
-
-    print(f"✓ System loaded: {SEARCH_SYSTEM['index'].ntotal:,} passages")
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -303,7 +339,12 @@ def main():
     print("=" * 80)
 
     # Run server
-    uvicorn.run(app, host=args.host, port=args.port, workers=args.workers)
+    uvicorn.run(
+        "api.server:app",
+        host=args.host,
+        port=args.port,
+        workers=args.workers
+    )
 
 
 if __name__ == "__main__":
