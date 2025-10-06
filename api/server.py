@@ -23,23 +23,24 @@ MAX_K = 100
 
 def get_default_args():
     """Get default arguments from environment variables or hardcoded defaults."""
+
     class Args:
         def __init__(self):
             self.index_path = os.getenv(
                 "INDEX_PATH",
-                "/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_data/outputs/index_faiss/final_index.faiss"
+                "/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_data/outputs/index_faiss/final_index.faiss",
             )
             self.output_dir = os.getenv(
                 "OUTPUT_DIR",
-                "/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_data/outputs"
+                "/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_data/outputs",
             )
             self.passages_dir = os.getenv(
                 "PASSAGES_DIR",
-                "/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_data/outputs/passages"
+                "/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_data/outputs/passages",
             )
             self.documents_dir = os.getenv(
                 "DOCUMENTS_DIR",
-                "/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_data/outputs/documents_jsonl"
+                "/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_data/outputs/documents_jsonl",
             )
             self.model_name = os.getenv("MODEL_NAME", "facebook/contriever")
             self.nprobe = int(os.getenv("NPROBE", "2048"))
@@ -126,7 +127,7 @@ app = FastAPI(
     title="FAISS Passage Retrieval API",
     description="Search engine for retrieving passages and documents from FAISS index",
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
 
@@ -339,12 +340,7 @@ def main():
     print("=" * 80)
 
     # Run server
-    uvicorn.run(
-        "api.server:app",
-        host=args.host,
-        port=args.port,
-        workers=args.workers
-    )
+    uvicorn.run("api.server:app", host=args.host, port=args.port, workers=args.workers)
 
 
 if __name__ == "__main__":

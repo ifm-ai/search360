@@ -75,23 +75,17 @@ TEST_QUERIES = [
 
 
 async def send_request(
-    session: aiohttp.ClientSession,
-    url: str,
-    query: str,
-    k: int,
-    return_fulltext: bool
+    session: aiohttp.ClientSession, url: str, query: str, k: int, return_fulltext: bool
 ) -> Dict[str, Any]:
     """Send a single search request and measure timing."""
-    payload = {
-        "query": query,
-        "k": k,
-        "return_fulltext": return_fulltext
-    }
+    payload = {"query": query, "k": k, "return_fulltext": return_fulltext}
 
     start_time = time.perf_counter()
 
     try:
-        async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=60)) as response:
+        async with session.post(
+            url, json=payload, timeout=aiohttp.ClientTimeout(total=60)
+        ) as response:
             data = await response.json()
             end_time = time.perf_counter()
 
@@ -102,8 +96,10 @@ async def send_request(
                 "query": query,
                 "k": k,
                 "return_fulltext": return_fulltext,
-                "num_results": len(data.get("results", [])) if response.status == 200 else 0,
-                "error": None
+                "num_results": (
+                    len(data.get("results", [])) if response.status == 200 else 0
+                ),
+                "error": None,
             }
     except Exception as e:
         end_time = time.perf_counter()
@@ -115,7 +111,7 @@ async def send_request(
             "k": k,
             "return_fulltext": return_fulltext,
             "num_results": 0,
-            "error": str(e)
+            "error": str(e),
         }
 
 
@@ -133,13 +129,17 @@ async def warmup(url: str, num_warmup: int = 10):
             tasks.append(send_request(session, url, query, k, False))
 
         results = []
-        for coro in tqdm(asyncio.as_completed(tasks), total=num_warmup, desc="Warming up"):
+        for coro in tqdm(
+            asyncio.as_completed(tasks), total=num_warmup, desc="Warming up"
+        ):
             result = await coro
             results.append(result)
 
     success_rate = sum(1 for r in results if r["success"]) / len(results) * 100
     avg_latency = np.mean([r["latency"] for r in results])
-    print(f"✓ Warmup complete: {success_rate:.1f}% success, avg latency: {avg_latency:.3f}s")
+    print(
+        f"✓ Warmup complete: {success_rate:.1f}% success, avg latency: {avg_latency:.3f}s"
+    )
 
 
 async def run_load_test(
@@ -147,7 +147,7 @@ async def run_load_test(
     num_requests: int,
     concurrency: int,
     k_values: List[int],
-    return_fulltext: bool
+    return_fulltext: bool,
 ) -> List[Dict[str, Any]]:
     """Run load test with specified concurrency."""
 
@@ -163,7 +163,7 @@ async def run_load_test(
     async with aiohttp.ClientSession() as session:
         # Process in batches of 'concurrency'
         for i in range(0, num_requests, concurrency):
-            batch = requests_params[i:i + concurrency]
+            batch = requests_params[i : i + concurrency]
             tasks = [
                 send_request(session, url, query, k, return_fulltext)
                 for query, k in batch
@@ -198,7 +198,7 @@ def calculate_metrics(results: List[Dict[str, Any]]) -> Dict[str, Any]:
             "p95": np.percentile(latencies, 95) if latencies else 0,
             "p99": np.percentile(latencies, 99) if latencies else 0,
             "std": np.std(latencies) if latencies else 0,
-        }
+        },
     }
 
     return metrics
@@ -210,7 +210,9 @@ def print_metrics(metrics: Dict[str, Any], test_name: str):
     print(f"{test_name}")
     print(f"{'='*80}")
     print(f"Total Requests:      {metrics['total_requests']}")
-    print(f"Successful:          {metrics['successful_requests']} ({metrics['success_rate']:.2f}%)")
+    print(
+        f"Successful:          {metrics['successful_requests']} ({metrics['success_rate']:.2f}%)"
+    )
     print(f"Failed:              {metrics['failed_requests']}")
     print(f"Total Time:          {metrics['total_time']:.2f}s")
     print(f"Throughput:          {metrics['throughput']:.2f} req/s")
@@ -234,55 +236,127 @@ def plot_results(all_results: Dict[str, Any], output_dir: Path):
 
     # Without fulltext
     concurrency_levels = sorted(all_results["without_fulltext"].keys())
-    metrics_without = [all_results["without_fulltext"][c]["metrics"] for c in concurrency_levels]
+    metrics_without = [
+        all_results["without_fulltext"][c]["metrics"] for c in concurrency_levels
+    ]
 
     # Plot latency percentiles
     ax = axes[0, 0]
-    ax.plot(concurrency_levels, [m["latency"]["mean"]*1000 for m in metrics_without], 'o-', label="Mean", linewidth=2)
-    ax.plot(concurrency_levels, [m["latency"]["median"]*1000 for m in metrics_without], 's-', label="Median (p50)", linewidth=2)
-    ax.plot(concurrency_levels, [m["latency"]["p95"]*1000 for m in metrics_without], '^-', label="p95", linewidth=2)
-    ax.plot(concurrency_levels, [m["latency"]["p99"]*1000 for m in metrics_without], 'v-', label="p99", linewidth=2)
+    ax.plot(
+        concurrency_levels,
+        [m["latency"]["mean"] * 1000 for m in metrics_without],
+        "o-",
+        label="Mean",
+        linewidth=2,
+    )
+    ax.plot(
+        concurrency_levels,
+        [m["latency"]["median"] * 1000 for m in metrics_without],
+        "s-",
+        label="Median (p50)",
+        linewidth=2,
+    )
+    ax.plot(
+        concurrency_levels,
+        [m["latency"]["p95"] * 1000 for m in metrics_without],
+        "^-",
+        label="p95",
+        linewidth=2,
+    )
+    ax.plot(
+        concurrency_levels,
+        [m["latency"]["p99"] * 1000 for m in metrics_without],
+        "v-",
+        label="p99",
+        linewidth=2,
+    )
     ax.set_xlabel("Concurrency Level", fontsize=12)
     ax.set_ylabel("Latency (ms)", fontsize=12)
-    ax.set_title("Latency vs Concurrency (without fulltext)", fontsize=14, fontweight='bold')
+    ax.set_title(
+        "Latency vs Concurrency (without fulltext)", fontsize=14, fontweight="bold"
+    )
     ax.legend()
     ax.grid(True, alpha=0.3)
 
     # Plot throughput
     ax = axes[0, 1]
-    ax.plot(concurrency_levels, [m["throughput"] for m in metrics_without], 'o-', linewidth=2, color='green')
+    ax.plot(
+        concurrency_levels,
+        [m["throughput"] for m in metrics_without],
+        "o-",
+        linewidth=2,
+        color="green",
+    )
     ax.set_xlabel("Concurrency Level", fontsize=12)
     ax.set_ylabel("Throughput (req/s)", fontsize=12)
-    ax.set_title("Throughput vs Concurrency (without fulltext)", fontsize=14, fontweight='bold')
+    ax.set_title(
+        "Throughput vs Concurrency (without fulltext)", fontsize=14, fontweight="bold"
+    )
     ax.grid(True, alpha=0.3)
 
     # With fulltext
     if all_results["with_fulltext"]:
-        metrics_with = [all_results["with_fulltext"][c]["metrics"] for c in concurrency_levels]
+        metrics_with = [
+            all_results["with_fulltext"][c]["metrics"] for c in concurrency_levels
+        ]
 
         # Plot latency percentiles
         ax = axes[1, 0]
-        ax.plot(concurrency_levels, [m["latency"]["mean"]*1000 for m in metrics_with], 'o-', label="Mean", linewidth=2)
-        ax.plot(concurrency_levels, [m["latency"]["median"]*1000 for m in metrics_with], 's-', label="Median (p50)", linewidth=2)
-        ax.plot(concurrency_levels, [m["latency"]["p95"]*1000 for m in metrics_with], '^-', label="p95", linewidth=2)
-        ax.plot(concurrency_levels, [m["latency"]["p99"]*1000 for m in metrics_with], 'v-', label="p99", linewidth=2)
+        ax.plot(
+            concurrency_levels,
+            [m["latency"]["mean"] * 1000 for m in metrics_with],
+            "o-",
+            label="Mean",
+            linewidth=2,
+        )
+        ax.plot(
+            concurrency_levels,
+            [m["latency"]["median"] * 1000 for m in metrics_with],
+            "s-",
+            label="Median (p50)",
+            linewidth=2,
+        )
+        ax.plot(
+            concurrency_levels,
+            [m["latency"]["p95"] * 1000 for m in metrics_with],
+            "^-",
+            label="p95",
+            linewidth=2,
+        )
+        ax.plot(
+            concurrency_levels,
+            [m["latency"]["p99"] * 1000 for m in metrics_with],
+            "v-",
+            label="p99",
+            linewidth=2,
+        )
         ax.set_xlabel("Concurrency Level", fontsize=12)
         ax.set_ylabel("Latency (ms)", fontsize=12)
-        ax.set_title("Latency vs Concurrency (with fulltext)", fontsize=14, fontweight='bold')
+        ax.set_title(
+            "Latency vs Concurrency (with fulltext)", fontsize=14, fontweight="bold"
+        )
         ax.legend()
         ax.grid(True, alpha=0.3)
 
         # Plot throughput
         ax = axes[1, 1]
-        ax.plot(concurrency_levels, [m["throughput"] for m in metrics_with], 'o-', linewidth=2, color='green')
+        ax.plot(
+            concurrency_levels,
+            [m["throughput"] for m in metrics_with],
+            "o-",
+            linewidth=2,
+            color="green",
+        )
         ax.set_xlabel("Concurrency Level", fontsize=12)
         ax.set_ylabel("Throughput (req/s)", fontsize=12)
-        ax.set_title("Throughput vs Concurrency (with fulltext)", fontsize=14, fontweight='bold')
+        ax.set_title(
+            "Throughput vs Concurrency (with fulltext)", fontsize=14, fontweight="bold"
+        )
         ax.grid(True, alpha=0.3)
 
     plt.tight_layout()
     plot_file = output_dir / "load_test_results.png"
-    plt.savefig(plot_file, dpi=150, bbox_inches='tight')
+    plt.savefig(plot_file, dpi=150, bbox_inches="tight")
     print(f"\n✓ Plot saved to: {plot_file}")
 
     # Plot 2: Latency distribution histogram for each concurrency level
@@ -293,19 +367,34 @@ def plot_results(all_results: Dict[str, Any], output_dir: Path):
         if idx >= 6:
             break
         ax = axes[idx]
-        latencies = [r["latency"]*1000 for r in all_results["without_fulltext"][conc]["results"]]
-        ax.hist(latencies, bins=50, alpha=0.7, color='blue', edgecolor='black')
-        ax.axvline(np.mean(latencies), color='red', linestyle='--', linewidth=2, label=f'Mean: {np.mean(latencies):.1f}ms')
-        ax.axvline(np.median(latencies), color='green', linestyle='--', linewidth=2, label=f'Median: {np.median(latencies):.1f}ms')
+        latencies = [
+            r["latency"] * 1000
+            for r in all_results["without_fulltext"][conc]["results"]
+        ]
+        ax.hist(latencies, bins=50, alpha=0.7, color="blue", edgecolor="black")
+        ax.axvline(
+            np.mean(latencies),
+            color="red",
+            linestyle="--",
+            linewidth=2,
+            label=f"Mean: {np.mean(latencies):.1f}ms",
+        )
+        ax.axvline(
+            np.median(latencies),
+            color="green",
+            linestyle="--",
+            linewidth=2,
+            label=f"Median: {np.median(latencies):.1f}ms",
+        )
         ax.set_xlabel("Latency (ms)", fontsize=10)
         ax.set_ylabel("Frequency", fontsize=10)
-        ax.set_title(f"Concurrency = {conc}", fontsize=12, fontweight='bold')
+        ax.set_title(f"Concurrency = {conc}", fontsize=12, fontweight="bold")
         ax.legend(fontsize=8)
         ax.grid(True, alpha=0.3)
 
     plt.tight_layout()
     hist_file = output_dir / "latency_distributions.png"
-    plt.savefig(hist_file, dpi=150, bbox_inches='tight')
+    plt.savefig(hist_file, dpi=150, bbox_inches="tight")
     print(f"✓ Histogram saved to: {hist_file}")
 
 
@@ -316,48 +405,45 @@ async def main():
         "--url",
         type=str,
         default="http://localhost:8000/search",
-        help="API endpoint URL"
+        help="API endpoint URL",
     )
 
     parser.add_argument(
         "--num_requests",
         type=int,
         default=1000,
-        help="Total number of requests to send"
+        help="Total number of requests to send",
     )
 
     parser.add_argument(
         "--concurrency_levels",
         type=str,
         default="1,5,10,20,30,50",
-        help="Comma-separated concurrency levels to test"
+        help="Comma-separated concurrency levels to test",
     )
 
     parser.add_argument(
         "--k_values",
         type=str,
         default="1,5,10",
-        help="Comma-separated k values to test"
+        help="Comma-separated k values to test",
     )
 
     parser.add_argument(
         "--output_dir",
         type=str,
         default="load_test_results",
-        help="Directory to save results"
+        help="Directory to save results",
     )
 
     parser.add_argument(
-        "--warmup",
-        type=int,
-        default=10,
-        help="Number of warmup requests"
+        "--warmup", type=int, default=10, help="Number of warmup requests"
     )
 
     parser.add_argument(
         "--skip_fulltext",
         action="store_true",
-        help="Skip testing with return_fulltext=true"
+        help="Skip testing with return_fulltext=true",
     )
 
     args = parser.parse_args()
@@ -391,8 +477,8 @@ async def main():
             "num_requests": args.num_requests,
             "concurrency_levels": concurrency_levels,
             "k_values": k_values,
-            "timestamp": datetime.now().isoformat()
-        }
+            "timestamp": datetime.now().isoformat(),
+        },
     }
 
     # Test without fulltext
@@ -405,11 +491,7 @@ async def main():
         start_time = time.perf_counter()
 
         results = await run_load_test(
-            args.url,
-            args.num_requests,
-            concurrency,
-            k_values,
-            return_fulltext=False
+            args.url, args.num_requests, concurrency, k_values, return_fulltext=False
         )
 
         end_time = time.perf_counter()
@@ -418,7 +500,7 @@ async def main():
         all_results["without_fulltext"][concurrency] = {
             "results": results,
             "metrics": metrics,
-            "wall_time": end_time - start_time
+            "wall_time": end_time - start_time,
         }
 
         print(f"✓ Completed in {end_time - start_time:.2f}s")
@@ -438,11 +520,7 @@ async def main():
             start_time = time.perf_counter()
 
             results = await run_load_test(
-                args.url,
-                args.num_requests,
-                concurrency,
-                k_values,
-                return_fulltext=True
+                args.url, args.num_requests, concurrency, k_values, return_fulltext=True
             )
 
             end_time = time.perf_counter()
@@ -451,7 +529,7 @@ async def main():
             all_results["with_fulltext"][concurrency] = {
                 "results": results,
                 "metrics": metrics,
-                "wall_time": end_time - start_time
+                "wall_time": end_time - start_time,
             }
 
             print(f"✓ Completed in {end_time - start_time:.2f}s")
@@ -468,14 +546,14 @@ async def main():
     for concurrency in concurrency_levels:
         print_metrics(
             all_results["without_fulltext"][concurrency]["metrics"],
-            f"WITHOUT FULLTEXT - Concurrency: {concurrency}"
+            f"WITHOUT FULLTEXT - Concurrency: {concurrency}",
         )
 
     if not args.skip_fulltext:
         for concurrency in concurrency_levels:
             print_metrics(
                 all_results["with_fulltext"][concurrency]["metrics"],
-                f"WITH FULLTEXT - Concurrency: {concurrency}"
+                f"WITH FULLTEXT - Concurrency: {concurrency}",
             )
 
     # Save results to JSON
@@ -486,19 +564,17 @@ async def main():
     json_results = {
         "config": all_results["config"],
         "without_fulltext": {
-            str(k): {
-                "metrics": v["metrics"],
-                "wall_time": v["wall_time"]
-            }
+            str(k): {"metrics": v["metrics"], "wall_time": v["wall_time"]}
             for k, v in all_results["without_fulltext"].items()
         },
-        "with_fulltext": {
-            str(k): {
-                "metrics": v["metrics"],
-                "wall_time": v["wall_time"]
+        "with_fulltext": (
+            {
+                str(k): {"metrics": v["metrics"], "wall_time": v["wall_time"]}
+                for k, v in all_results["with_fulltext"].items()
             }
-            for k, v in all_results["with_fulltext"].items()
-        } if not args.skip_fulltext else {}
+            if not args.skip_fulltext
+            else {}
+        ),
     }
 
     results_file = output_dir / f"load_test_{timestamp}.json"
