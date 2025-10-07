@@ -38,6 +38,13 @@ python api.py \
 
 Search for passages and optionally return ranked source documents.
 
+**Request Parameters:**
+- `query` (string, required): Search query
+- `k` (int, default: 10): Number of results to return
+- `return_fulltext` (bool, default: false): Include full document text
+- `rerank` (bool, default: true): Use re-ranking for improved accuracy
+- `initial_k` (int, default: 25): Passages to retrieve before re-ranking
+
 **Request:**
 ```bash
 curl -X POST http://0.0.0.0:8000/search \
@@ -45,11 +52,12 @@ curl -X POST http://0.0.0.0:8000/search \
   -d '{
     "query": "What is machine learning?",
     "k": 10,
-    "return_fulltext": false
+    "return_fulltext": false,
+    "rerank": true
   }'
 ```
 
-**Response (return_fulltext=false):**
+**Response (return_fulltext=false, rerank=true):**
 ```json
 {
   "query": "What is machine learning?",
@@ -57,6 +65,7 @@ curl -X POST http://0.0.0.0:8000/search \
     {
       "rank": 1,
       "score": 0.8945,
+      "rerank_score": 4.527,
       "passage_id": 12345,
       "passage_text": "Machine learning is a subset of AI...",
       "passage_file": "arxiv_part_0001_passages.jsonl",
@@ -67,6 +76,8 @@ curl -X POST http://0.0.0.0:8000/search \
   "documents": null
 }
 ```
+
+**Note:** `rerank_score` is only present when `rerank=true`. Higher rerank scores indicate better relevance.
 
 **Response (return_fulltext=true):**
 ```json
@@ -235,11 +246,27 @@ FastAPI provides automatic interactive docs:
 - **Swagger UI**: http://localhost:8000/docs
 - **ReDoc**: http://localhost:8000/redoc
 
+## Re-ranking
+
+Re-ranking uses `BAAI/bge-reranker-v2-m3` cross-encoder model to improve result quality.
+
+**How it works:**
+1. FAISS retrieves `initial_k` passages (default: 25)
+2. Re-ranker scores each query-passage pair
+3. Results re-ordered by `rerank_score`
+4. Top `k` passages returned
+
+**Performance trade-off:**
+- **Enabled** (default): Better accuracy, +10-50ms latency
+- **Disabled**: Faster, uses only FAISS scores
+
+**Disable globally:** Start server with `--load_reranker=false` or set env `LOAD_RERANKER=false`
+
 ## Document Ranking
 
 When `return_fulltext=true`, documents are ranked by **occurrence count** (how many passages came from that document).
 
-### Current Algorithm (in `api_utils.py`)
+### Current Algorithm (in `api/utils.py`)
 
 ```python
 rank_documents_by_occurrence(passage_results)
@@ -252,7 +279,7 @@ Pure count-based: More passages from a document = higher rank.
 1. **Score-based**: `rank_documents_by_score_sum()` - Sum of passage scores
 2. **Best passage**: `rank_documents_by_best_passage()` - Highest-ranked passage
 
-To change: Edit `api.py` line with `rank_documents_by_occurrence()`.
+To change: Edit `api/server.py` line with `rank_documents_by_occurrence()`.
 
 ## Performance
 
