@@ -202,6 +202,30 @@ The server info file contains:
 
 See **[API_README.md](API_README.md#running-with-slurm)** for programmatic access examples.
 
+## Re-ranking
+
+The API includes optional re-ranking using `BAAI/bge-reranker-v2-m3` to improve result quality.
+
+**How it works:**
+1. Retrieve top 25 passages from FAISS (fast, approximate)
+2. Re-rank using cross-encoder model (slower, more accurate)
+3. Return top k results
+
+**Usage:**
+```bash
+# With re-ranking (default)
+curl -X POST http://localhost:8000/search \
+  -H "Content-Type: application/json" \
+  -d '{"query": "What is machine learning?", "k": 10, "rerank": true}'
+
+# Without re-ranking
+curl -X POST http://localhost:8000/search \
+  -H "Content-Type: application/json" \
+  -d '{"query": "What is machine learning?", "k": 10, "rerank": false}'
+```
+
+Response includes both `score` (FAISS similarity) and `rerank_score` (cross-encoder score).
+
 ## License
 
 Internal research project.
