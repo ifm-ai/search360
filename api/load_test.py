@@ -2,6 +2,8 @@
 """
 Load testing script for FAISS search API.
 Tests with varying concurrency levels and generates detailed performance metrics.
+
+python api/load_test.py --skip_fulltext --num_requests 1000 --concurrency_levels "8,16,32" --k_values "5,10"
 """
 
 import argparse
@@ -75,10 +77,10 @@ TEST_QUERIES = [
 
 
 async def send_request(
-    session: aiohttp.ClientSession, url: str, query: str, k: int, return_fulltext: bool
+    session: aiohttp.ClientSession, url: str, query: str, k: int, return_fulltext: bool, rerank: bool = True
 ) -> Dict[str, Any]:
     """Send a single search request and measure timing."""
-    payload = {"query": query, "k": k, "return_fulltext": return_fulltext}
+    payload = {"query": query, "k": k, "return_fulltext": return_fulltext, "rerank": rerank}
 
     start_time = time.perf_counter()
 
@@ -148,6 +150,7 @@ async def run_load_test(
     concurrency: int,
     k_values: List[int],
     return_fulltext: bool,
+    rerank: bool = True,
 ) -> List[Dict[str, Any]]:
     """Run load test with specified concurrency."""
 
@@ -165,7 +168,7 @@ async def run_load_test(
         for i in range(0, num_requests, concurrency):
             batch = requests_params[i : i + concurrency]
             tasks = [
-                send_request(session, url, query, k, return_fulltext)
+                send_request(session, url, query, k, return_fulltext, rerank)
                 for query, k in batch
             ]
 
@@ -472,6 +475,8 @@ async def main():
     all_results = {
         "without_fulltext": {},
         "with_fulltext": {},
+        "without_fulltext_no_rerank": {},
+        "with_fulltext_no_rerank": {},
         "config": {
             "url": args.url,
             "num_requests": args.num_requests,
@@ -481,9 +486,9 @@ async def main():
         },
     }
 
-    # Test without fulltext
+    # Test without fulltext (WITH reranking)
     print(f"\n{'='*80}")
-    print("TESTING WITHOUT FULLTEXT")
+    print("TESTING WITHOUT FULLTEXT (WITH RERANKING)")
     print(f"{'='*80}")
 
     for concurrency in concurrency_levels:
@@ -491,7 +496,7 @@ async def main():
         start_time = time.perf_counter()
 
         results = await run_load_test(
-            args.url, args.num_requests, concurrency, k_values, return_fulltext=False
+            args.url, args.num_requests, concurrency, k_values, return_fulltext=False, rerank=True
         )
 
         end_time = time.perf_counter()
@@ -509,10 +514,38 @@ async def main():
         print(f"  Mean latency: {metrics['latency']['mean']*1000:.2f}ms")
         print(f"  p95 latency: {metrics['latency']['p95']*1000:.2f}ms")
 
+    # Test without fulltext (NO reranking)
+    print(f"\n{'='*80}")
+    print("TESTING WITHOUT FULLTEXT (NO RERANKING)")
+    print(f"{'='*80}")
+
+    for concurrency in concurrency_levels:
+        print(f"\n>>> Running with concurrency = {concurrency}")
+        start_time = time.perf_counter()
+
+        results = await run_load_test(
+            args.url, args.num_requests, concurrency, k_values, return_fulltext=False, rerank=False
+        )
+
+        end_time = time.perf_counter()
+        metrics = calculate_metrics(results)
+
+        all_results["without_fulltext_no_rerank"][concurrency] = {
+            "results": results,
+            "metrics": metrics,
+            "wall_time": end_time - start_time,
+        }
+
+        print(f"✓ Completed in {end_time - start_time:.2f}s")
+        print(f"  Success rate: {metrics['success_rate']:.2f}%")
+        print(f"  Throughput: {metrics['throughput']:.2f} req/s")
+        print(f"  Mean latency: {metrics['latency']['mean']*1000:.2f}ms")
+        print(f"  p95 latency: {metrics['latency']['p95']*1000:.2f}ms")
+
     # Test with fulltext
     if not args.skip_fulltext:
         print(f"\n{'='*80}")
-        print("TESTING WITH FULLTEXT")
+        print("TESTING WITH FULLTEXT (WITH RERANKING)")
         print(f"{'='*80}")
 
         for concurrency in concurrency_levels:
@@ -520,13 +553,40 @@ async def main():
             start_time = time.perf_counter()
 
             results = await run_load_test(
-                args.url, args.num_requests, concurrency, k_values, return_fulltext=True
+                args.url, args.num_requests, concurrency, k_values, return_fulltext=True, rerank=True
             )
 
             end_time = time.perf_counter()
             metrics = calculate_metrics(results)
 
             all_results["with_fulltext"][concurrency] = {
+                "results": results,
+                "metrics": metrics,
+                "wall_time": end_time - start_time,
+            }
+
+            print(f"✓ Completed in {end_time - start_time:.2f}s")
+            print(f"  Success rate: {metrics['success_rate']:.2f}%")
+            print(f"  Throughput: {metrics['throughput']:.2f} req/s")
+            print(f"  Mean latency: {metrics['latency']['mean']*1000:.2f}ms")
+            print(f"  p95 latency: {metrics['latency']['p95']*1000:.2f}ms")
+
+        print(f"\n{'='*80}")
+        print("TESTING WITH FULLTEXT (NO RERANKING)")
+        print(f"{'='*80}")
+
+        for concurrency in concurrency_levels:
+            print(f"\n>>> Running with concurrency = {concurrency}")
+            start_time = time.perf_counter()
+
+            results = await run_load_test(
+                args.url, args.num_requests, concurrency, k_values, return_fulltext=True, rerank=False
+            )
+
+            end_time = time.perf_counter()
+            metrics = calculate_metrics(results)
+
+            all_results["with_fulltext_no_rerank"][concurrency] = {
                 "results": results,
                 "metrics": metrics,
                 "wall_time": end_time - start_time,
@@ -546,14 +606,26 @@ async def main():
     for concurrency in concurrency_levels:
         print_metrics(
             all_results["without_fulltext"][concurrency]["metrics"],
-            f"WITHOUT FULLTEXT - Concurrency: {concurrency}",
+            f"WITHOUT FULLTEXT (WITH RERANKING) - Concurrency: {concurrency}",
+        )
+
+    for concurrency in concurrency_levels:
+        print_metrics(
+            all_results["without_fulltext_no_rerank"][concurrency]["metrics"],
+            f"WITHOUT FULLTEXT (NO RERANKING) - Concurrency: {concurrency}",
         )
 
     if not args.skip_fulltext:
         for concurrency in concurrency_levels:
             print_metrics(
                 all_results["with_fulltext"][concurrency]["metrics"],
-                f"WITH FULLTEXT - Concurrency: {concurrency}",
+                f"WITH FULLTEXT (WITH RERANKING) - Concurrency: {concurrency}",
+            )
+
+        for concurrency in concurrency_levels:
+            print_metrics(
+                all_results["with_fulltext_no_rerank"][concurrency]["metrics"],
+                f"WITH FULLTEXT (NO RERANKING) - Concurrency: {concurrency}",
             )
 
     # Save results to JSON
@@ -567,10 +639,22 @@ async def main():
             str(k): {"metrics": v["metrics"], "wall_time": v["wall_time"]}
             for k, v in all_results["without_fulltext"].items()
         },
+        "without_fulltext_no_rerank": {
+            str(k): {"metrics": v["metrics"], "wall_time": v["wall_time"]}
+            for k, v in all_results["without_fulltext_no_rerank"].items()
+        },
         "with_fulltext": (
             {
                 str(k): {"metrics": v["metrics"], "wall_time": v["wall_time"]}
                 for k, v in all_results["with_fulltext"].items()
+            }
+            if not args.skip_fulltext
+            else {}
+        ),
+        "with_fulltext_no_rerank": (
+            {
+                str(k): {"metrics": v["metrics"], "wall_time": v["wall_time"]}
+                for k, v in all_results["with_fulltext_no_rerank"].items()
             }
             if not args.skip_fulltext
             else {}
