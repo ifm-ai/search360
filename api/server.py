@@ -45,6 +45,7 @@ def get_default_args():
             self.model_name = os.getenv("MODEL_NAME", "facebook/contriever")
             self.nprobe = int(os.getenv("NPROBE", "2048"))
             self.use_gpu = os.getenv("USE_GPU", "true").lower() == "true"
+            self.load_reranker = os.getenv("LOAD_RERANKER", "true").lower() == "true"
 
     return Args()
 
@@ -72,6 +73,8 @@ class SearchRequest(BaseModel):
     query: str = Field(..., description="Search query")
     k: int = Field(10, description="Number of results to return", ge=1, le=MAX_K)
     return_fulltext: bool = Field(False, description="Return full source documents")
+    rerank: bool = Field(True, description="Use re-ranking to improve results")
+    initial_k: int = Field(25, description="Number of passages to retrieve before re-ranking", ge=1, le=100)
 
 
 class PassageResult(BaseModel):
@@ -82,6 +85,7 @@ class PassageResult(BaseModel):
     passage_file: str
     passage_position: int
     doc_id: int
+    rerank_score: Optional[float] = None
 
 
 class DocumentResult(BaseModel):
@@ -189,12 +193,13 @@ async def search(request: SearchRequest):
         request.query, SEARCH_SYSTEM["model"], SEARCH_SYSTEM["tokenizer"]
     )
 
-    # Search index
+    # Search index - retrieve more if re-ranking
+    search_k = request.initial_k if request.rerank else request.k
     scores, passage_ids = SEARCH_SYSTEM["index"].search(
-        query_embedding.astype(np.float32), request.k
+        query_embedding.astype(np.float32), search_k
     )
 
-    # Retrieve passages and documents
+    # Retrieve passages
     passage_results = []
     for i, passage_id in enumerate(passage_ids[0]):
         score = scores[0][i]
@@ -202,7 +207,7 @@ async def search(request: SearchRequest):
         # Get passage
         passage, psg_filename, psg_position = get_passage(passage_id, SEARCH_SYSTEM)
 
-        # Get source document
+        # Get source document ID
         doc_id = SEARCH_SYSTEM["passage_to_doc_id"][passage_id]
 
         result = {
@@ -215,14 +220,23 @@ async def search(request: SearchRequest):
             "doc_id": int(doc_id),
         }
 
-        # If return_fulltext, also fetch document
-        if request.return_fulltext:
+        passage_results.append(result)
+
+    # Re-rank if requested and model is loaded
+    if request.rerank and SEARCH_SYSTEM["reranker_model"] is not None:
+        from api.search import rerank_passages
+        passage_results = rerank_passages(request.query, passage_results, SEARCH_SYSTEM)
+        # Keep only top k after re-ranking
+        passage_results = passage_results[:request.k]
+
+    # Fetch full documents if requested (after re-ranking)
+    if request.return_fulltext:
+        for result in passage_results:
+            doc_id = result["doc_id"]
             document, doc_filename, doc_position = get_document(doc_id, SEARCH_SYSTEM)
             result["doc_text"] = document.get("text", "")
             result["doc_file"] = doc_filename
             result["doc_position"] = int(doc_position)
-
-        passage_results.append(result)
 
     # Prepare response
     response = {"query": request.query, "results": passage_results}
@@ -321,6 +335,13 @@ def main():
 
     parser.add_argument(
         "--workers", type=int, default=1, help="Number of worker processes"
+    )
+
+    parser.add_argument(
+        "--load_reranker",
+        action="store_true",
+        default=True,
+        help="Load re-ranker model for improved results"
     )
 
     args = parser.parse_args()

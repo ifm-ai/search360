@@ -11,7 +11,7 @@ from pathlib import Path
 import numpy as np
 import torch
 import faiss
-from transformers import AutoTokenizer, AutoModel
+from transformers import AutoTokenizer, AutoModel, AutoModelForSequenceClassification
 
 
 def mean_pooling(token_embeddings, mask):
@@ -106,17 +106,34 @@ def load_search_system(args):
     print(f"  - {len(doc_id_to_file_id):,} documents")
 
     # Load Contriever model
-    print(f"\nLoading model: {args.model_name}...")
+    print(f"\nLoading embedding model: {args.model_name}...")
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
     model = AutoModel.from_pretrained(args.model_name)
 
     if torch.cuda.is_available():
         model = model.to("cuda")
-        print(f"✓ Model loaded on GPU")
+        print(f"✓ Embedding model loaded on GPU")
     else:
-        print(f"✓ Model loaded on CPU")
+        print(f"✓ Embedding model loaded on CPU")
 
     model.eval()
+
+    # Load re-ranker model
+    reranker_model = None
+    reranker_tokenizer = None
+
+    if hasattr(args, 'load_reranker') and args.load_reranker:
+        print(f"\nLoading re-ranker model: BAAI/bge-reranker-v2-m3...")
+        reranker_tokenizer = AutoTokenizer.from_pretrained('BAAI/bge-reranker-v2-m3')
+        reranker_model = AutoModelForSequenceClassification.from_pretrained('BAAI/bge-reranker-v2-m3')
+
+        if torch.cuda.is_available():
+            reranker_model = reranker_model.to("cuda")
+            print(f"✓ Re-ranker model loaded on GPU")
+        else:
+            print(f"✓ Re-ranker model loaded on CPU")
+
+        reranker_model.eval()
 
     return {
         "index": index,
@@ -131,6 +148,8 @@ def load_search_system(args):
         "documents_dir": Path(args.documents_dir),
         "model": model,
         "tokenizer": tokenizer,
+        "reranker_model": reranker_model,
+        "reranker_tokenizer": reranker_tokenizer,
     }
 
 
@@ -166,13 +185,74 @@ def get_document(doc_id, system):
     return document, filename, position
 
 
-def search(query, system, k=5):
-    """Search for top-k relevant passages."""
+def rerank_passages(query, passages, system):
+    """Re-rank passages using BGE re-ranker model.
+
+    Args:
+        query: Search query string
+        passages: List of dicts with 'passage_text' and other metadata
+        system: System dict containing reranker_model and reranker_tokenizer
+
+    Returns:
+        Re-ranked list of passages with added 'rerank_score' field
+    """
+    if system["reranker_model"] is None or system["reranker_tokenizer"] is None:
+        # Re-ranker not loaded, return passages as-is
+        return passages
+
+    # Prepare pairs: [(query, passage_text), ...]
+    pairs = [[query, p["passage_text"]] for p in passages]
+
+    # Get re-ranking scores
+    with torch.no_grad():
+        inputs = system["reranker_tokenizer"](
+            pairs,
+            padding=True,
+            truncation=True,
+            return_tensors='pt',
+            max_length=512
+        )
+
+        # Move to GPU if available
+        device = next(system["reranker_model"].parameters()).device
+        inputs = {k: v.to(device) for k, v in inputs.items()}
+
+        scores = system["reranker_model"](**inputs, return_dict=True).logits.view(-1).float()
+        scores = scores.cpu().numpy()
+
+    # Add rerank scores to passages
+    for passage, score in zip(passages, scores):
+        passage["rerank_score"] = float(score)
+
+    # Sort by rerank score (descending)
+    reranked = sorted(passages, key=lambda x: x["rerank_score"], reverse=True)
+
+    # Update ranks
+    for i, passage in enumerate(reranked):
+        passage["rank"] = i + 1
+
+    return reranked
+
+
+def search(query, system, k=5, rerank=False, initial_k=25):
+    """Search for top-k relevant passages.
+
+    Args:
+        query: Search query string
+        system: System dict with index, models, etc.
+        k: Number of final results to return
+        rerank: Whether to use re-ranking (default: False)
+        initial_k: Number of passages to retrieve before re-ranking (default: 25)
+
+    Returns:
+        List of search results (re-ranked if rerank=True)
+    """
     # Create query embedding
     query_embedding = embed_query(query, system["model"], system["tokenizer"])
 
-    # Search index
-    scores, passage_ids = system["index"].search(query_embedding.astype(np.float32), k)
+    # Search index - retrieve more if re-ranking
+    search_k = initial_k if rerank else k
+    scores, passage_ids = system["index"].search(query_embedding.astype(np.float32), search_k)
 
     # Retrieve passages and documents
     results = []
@@ -200,6 +280,12 @@ def search(query, system, k=5):
                 "doc_position": int(doc_position),
             }
         )
+
+    # Re-rank if requested
+    if rerank and system["reranker_model"] is not None:
+        results = rerank_passages(query, results, system)
+        # Keep only top k after re-ranking
+        results = results[:k]
 
     return results
 
