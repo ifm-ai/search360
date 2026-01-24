@@ -123,13 +123,13 @@ def test_document_retrieval(
 # Usage example
 if __name__ == "__main__":
     # Directory containing your original document JSONL files
-    document_dir = "/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_full/"
+    document_dir = "/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_high_quality_data/raw_high_data"
 
     # Where to save the numpy arrays
-    output_dir = "/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_full_output/index/"
+    output_dir = "/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_high_quality_data/index"
 
     doc_filenames, doc_id_to_file_id, doc_pos_id_array = create_document_mappings(
-        document_dir, output_dir
+        document_dir, output_dir, n_workers=128
     )
 
     # Verify the results
