@@ -30,7 +30,7 @@ _worker_tokenizer = None
 def init_worker(tokenizer_name):
     """Initialize worker with tokenizer (called once per worker)."""
     global _worker_tokenizer
-    _worker_tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+    _worker_tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, local_files_only=True)
 
 
 def chunk_text(text, tokenizer, chunk_size=128, min_last_chunk=64):
@@ -112,18 +112,31 @@ def process_document_file(args):
     )
 
 
-def count_documents(doc_dir):
-    """Count total documents across all files to assign doc_ids."""
+def count_lines_in_file(filepath):
+    """Count non-empty lines in a file (fast binary read)."""
+    count = 0
+    with open(filepath, "rb") as f:
+        for line in f:
+            if line.strip():
+                count += 1
+    return count
+
+
+def count_documents(doc_dir, n_workers=None):
+    """Count total documents across all files to assign doc_ids (parallelized)."""
+    if n_workers is None:
+        n_workers = cpu_count()
+
     doc_files = sorted(Path(doc_dir).glob("*.jsonl"))
 
-    doc_counts = []
-    for filepath in tqdm(doc_files, desc="Counting documents"):
-        count = 0
-        with open(filepath, "r", encoding="utf-8") as f:
-            for line in f:
-                if line.strip():
-                    count += 1
-        doc_counts.append(count)
+    with Pool(n_workers) as pool:
+        doc_counts = list(
+            tqdm(
+                pool.imap(count_lines_in_file, doc_files),
+                total=len(doc_files),
+                desc="Counting documents",
+            )
+        )
 
     return doc_files, doc_counts
 
@@ -158,7 +171,7 @@ def create_passages_and_mappings(
 
     # Count documents to assign doc_ids
     print("Step 1: Counting documents...")
-    doc_files, doc_counts = count_documents(document_dir)
+    doc_files, doc_counts = count_documents(document_dir, n_workers=n_workers)
 
     # Calculate starting doc_id for each file
     start_doc_ids = [0]
@@ -296,17 +309,17 @@ def test_passage_to_document_lookup(
 
 if __name__ == "__main__":
     # Directories
-    document_dir = "/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_full"
-    output_dir = "/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_full_output"
+    document_dir = "/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_high_quality_data/raw_high_data"
+    output_dir = "/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_high_quality_data"
 
     # Create passages and mappings
     passage_mappings = create_passages_and_mappings(
         document_dir=document_dir,
         output_dir=output_dir,
-        tokenizer_name="Qwen/Qwen3-Next-80B-A3B-Instruct",
-        chunk_size=128,
-        min_last_chunk=64,
-        n_workers=cpu_count(),
+        tokenizer_name="Qwen/Qwen2.5-7B-Instruct",
+        chunk_size=256,
+        min_last_chunk=128,
+        n_workers=128,
     )
 
     # Load document mappings for testing
