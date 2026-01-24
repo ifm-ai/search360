@@ -155,8 +155,8 @@ def main(args):
 
     # Load model and tokenizer
     print(f"\nLoading model: {args.model_name}...")
-    tokenizer = AutoTokenizer.from_pretrained(args.model_name)
-    model = AutoModel.from_pretrained(args.model_name)
+    tokenizer = AutoTokenizer.from_pretrained(args.model_name, local_files_only=args.local_files_only)
+    model = AutoModel.from_pretrained(args.model_name, local_files_only=args.local_files_only)
 
     # Use all available GPUs with DataParallel
     if torch.cuda.device_count() > 1:
@@ -270,6 +270,12 @@ if __name__ == "__main__":
         type=int,
         default=None,
         help="Total number of parallel jobs. Use with --job_id",
+    )
+
+    parser.add_argument(
+        "--local_files_only",
+        action="store_true",
+        help="Use only locally cached models (no network calls)",
     )
 
     args = parser.parse_args()
