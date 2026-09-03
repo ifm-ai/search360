@@ -218,6 +218,12 @@ Key metrics from load testing:
 
 ## SLURM Integration
 
+> **Adapt these scripts before use.** `slurm_start_service.sh` and
+> `scripts/slurm_create_embeddings.sh` carry a site-specific SLURM header
+> (partition, QoS, account, reservation) and absolute interpreter paths from the
+> original cluster — including a `projects/faster_index` path predating the
+> rename. Edit both for your own site.
+
 Start service and track status:
 ```bash
 # Submit job
