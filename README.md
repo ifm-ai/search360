@@ -1,4 +1,4 @@
-# PretrainSeer
+# Search360
 
 Search and inspect billions of documents in your pretraining corpus.
 
@@ -80,7 +80,7 @@ curl -X POST http://localhost:8000/search \
 ## Project Structure
 
 ```
-pretrainseer/
+search360/
 ├── src/indexing_process/                 # Data processing pipeline (run in order)
 │   ├── 00_convert_parquets_to_jsonl.py   # Convert parquet to JSONL
 │   ├── 01_map_documents.py               # Create document mappings

@@ -1,4 +1,4 @@
-name: pretrainseer
+name: search360
 channels:
   - conda-forge
   - defaults

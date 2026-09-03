@@ -1,4 +1,4 @@
-# PretrainSeer — API Reference
+# Search360 — API Reference
 
 FastAPI service for searching passages and retrieving source documents.
 
