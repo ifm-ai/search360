@@ -6,3 +6,6 @@ logs/*
 load_test_results*
 runtime/*
 CLAUDE.md
+.env
+.env.*
+__pycache__/

@@ -21,31 +21,43 @@ SEARCH_SYSTEM = None
 MAX_K = 100
 
 
+# Default configuration. Every value may be overridden by the matching environment
+# variable, and the CLI flags in main() override both by exporting back into the
+# environment. Defined once here so argparse and get_default_args() cannot drift.
+_DEFAULTS = {
+    "INDEX_PATH": "/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_high_quality_data/index_faiss_msmarco/final_index.faiss",
+    "OUTPUT_DIR": "/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_high_quality_data",
+    "PASSAGES_DIR": "/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_high_quality_data/passages",
+    "DOCUMENTS_DIR": "/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_high_quality_data/raw_high_data",
+    "MODEL_NAME": "facebook/contriever-msmarco",
+    "NPROBE": "256",
+    "USE_GPU": "true",
+    "LOAD_RERANKER": "true",
+}
+
+
+def _env(key):
+    """Read a config key from the environment, falling back to _DEFAULTS."""
+    return os.getenv(key, _DEFAULTS[key])
+
+
+def _env_bool(key):
+    return _env(key).strip().lower() in ("1", "true", "yes", "on")
+
+
 def get_default_args():
-    """Get default arguments from environment variables or hardcoded defaults."""
+    """Build the runtime config from environment variables (see _DEFAULTS)."""
 
     class Args:
         def __init__(self):
-            self.index_path = os.getenv(
-                "INDEX_PATH",
-                "/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_high_quality_data/index_faiss_msmarco/final_index.faiss",
-            )
-            self.output_dir = os.getenv(
-                "OUTPUT_DIR",
-                "/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_high_quality_data",
-            )
-            self.passages_dir = os.getenv(
-                "PASSAGES_DIR",
-                "/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_high_quality_data/passages",
-            )
-            self.documents_dir = os.getenv(
-                "DOCUMENTS_DIR",
-                "/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_high_quality_data/raw_high_data",
-            )
-            self.model_name = os.getenv("MODEL_NAME", "facebook/contriever-msmarco")
-            self.nprobe = int(os.getenv("NPROBE", "256"))
-            self.use_gpu = os.getenv("USE_GPU", "true").lower() == "true"
-            self.load_reranker = os.getenv("LOAD_RERANKER", "true").lower() == "true"
+            self.index_path = _env("INDEX_PATH")
+            self.output_dir = _env("OUTPUT_DIR")
+            self.passages_dir = _env("PASSAGES_DIR")
+            self.documents_dir = _env("DOCUMENTS_DIR")
+            self.model_name = _env("MODEL_NAME")
+            self.nprobe = int(_env("NPROBE"))
+            self.use_gpu = _env_bool("USE_GPU")
+            self.load_reranker = _env_bool("LOAD_RERANKER")
 
     return Args()
 
@@ -301,77 +313,69 @@ def main():
     parser = argparse.ArgumentParser(description="FastAPI service for FAISS search")
 
     parser.add_argument(
-        "--index_path",
-        type=str,
-        default="/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_high_quality_data/index_faiss_msmarco/final_index.faiss",
+        "--index_path", type=str, default=_env("INDEX_PATH"),
         help="Path to FAISS index",
     )
-
     parser.add_argument(
-        "--output_dir",
-        type=str,
-        default="/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_high_quality_data",
+        "--output_dir", type=str, default=_env("OUTPUT_DIR"),
         help="Directory containing mappings",
     )
-
     parser.add_argument(
-        "--passages_dir",
-        type=str,
-        default="/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_high_quality_data/passages",
+        "--passages_dir", type=str, default=_env("PASSAGES_DIR"),
         help="Directory containing passage JSONL files",
     )
-
     parser.add_argument(
-        "--documents_dir",
-        type=str,
-        default="/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_high_quality_data/raw_high_data",
+        "--documents_dir", type=str, default=_env("DOCUMENTS_DIR"),
         help="Directory containing document JSONL files",
     )
-
     parser.add_argument(
-        "--model_name",
-        type=str,
-        default="facebook/contriever-msmarco",
+        "--model_name", type=str, default=_env("MODEL_NAME"),
         help="HuggingFace model name (MS MARCO fine-tuned)",
     )
-
     parser.add_argument(
-        "--nprobe", type=int, default=256, help="Number of clusters to probe (ds-serve default)"
+        "--nprobe", type=int, default=int(_env("NPROBE")),
+        help="Number of clusters to probe (ds-serve default)",
     )
-
     parser.add_argument(
-        "--use_gpu",
-        action="store_true",
-        default=False,
-        help="Use GPU(s) for FAISS search",
+        "--use_gpu", action=argparse.BooleanOptionalAction, default=_env_bool("USE_GPU"),
+        help="Use GPU(s) for FAISS search (--no-use_gpu to force CPU)",
     )
-
     parser.add_argument("--host", type=str, default="0.0.0.0", help="Server host")
-
     parser.add_argument("--port", type=int, default=8000, help="Server port")
-
     parser.add_argument(
         "--workers", type=int, default=1, help="Number of worker processes"
     )
-
     parser.add_argument(
-        "--load_reranker",
-        action="store_true",
-        default=True,
-        help="Load re-ranker model for improved results"
+        "--load_reranker", action=argparse.BooleanOptionalAction, default=_env_bool("LOAD_RERANKER"),
+        help="Load re-ranker model for improved results (--no-load_reranker to skip)",
     )
 
     args = parser.parse_args()
 
-    # Store args in app state for startup event
-    app.state.args = args
+    # uvicorn.run() is given an import string so that --workers > 1 works, which
+    # means every worker re-imports this module and builds a *fresh* `app`.
+    # Anything assigned to app.state here would be silently discarded, so the
+    # parsed arguments are exported into the environment instead: get_default_args()
+    # reads exactly these keys, and the environment survives both the re-import
+    # and the worker fork.
+    os.environ["INDEX_PATH"] = args.index_path
+    os.environ["OUTPUT_DIR"] = args.output_dir
+    os.environ["PASSAGES_DIR"] = args.passages_dir
+    os.environ["DOCUMENTS_DIR"] = args.documents_dir
+    os.environ["MODEL_NAME"] = args.model_name
+    os.environ["NPROBE"] = str(args.nprobe)
+    os.environ["USE_GPU"] = str(args.use_gpu).lower()
+    os.environ["LOAD_RERANKER"] = str(args.load_reranker).lower()
 
     # Print configuration
     print("=" * 80)
     print("FAISS API SERVER")
     print("=" * 80)
     print(f"Index: {args.index_path}")
+    print(f"Model: {args.model_name}")
+    print(f"nprobe: {args.nprobe}")
     print(f"Using GPU: {args.use_gpu}")
+    print(f"Re-ranker: {args.load_reranker}")
     print(f"Host: {args.host}")
     print(f"Port: {args.port}")
     print(f"Workers: {args.workers}")

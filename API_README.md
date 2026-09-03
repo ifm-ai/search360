@@ -1,4 +1,4 @@
-# FAISS Passage Retrieval API
+# pretrainseer — API Reference
 
 FastAPI service for searching passages and retrieving source documents.
 
@@ -12,24 +12,27 @@ FastAPI service for searching passages and retrieving source documents.
 
 ## Quick Start
 
-### 1. Start the server (CPU):
+### 1. Start the server (GPU, the default):
 ```bash
-python api.py
+python -m api.server --index_path /path/to/final_index.faiss
 ```
 
-### 2. Start the server (GPU):
+### 2. Start the server (CPU):
 ```bash
-python api.py --use_gpu
-python -m api.server --use_gpu
+python -m api.server --no-use_gpu --no-load_reranker \
+    --index_path /path/to/final_index.faiss
 ```
 
 ### 3. Custom configuration:
 ```bash
-python api.py \
+python -m api.server \
+    --index_path /path/to/final_index.faiss \
+    --passages_dir /path/to/passages \
+    --documents_dir /path/to/documents \
     --use_gpu \
     --host 0.0.0.0 \
     --port 8000 \
-    --workers 1
+    --workers 8
 ```
 
 ## API Endpoints
@@ -221,22 +224,27 @@ const results = await response.json();
 
 ### Command-line Arguments
 
-| Argument | Default | Description |
-|----------|---------|-------------|
-| `--index_path` | Path to index | FAISS index file |
-| `--output_dir` | Path to outputs | Mappings directory |
-| `--passages_dir` | Path to passages | Passage JSONL files |
-| `--documents_dir` | Path to documents | Document JSONL files |
-| `--model_name` | `facebook/contriever` | HuggingFace model |
-| `--nprobe` | `2048` | FAISS nprobe value |
-| `--use_gpu` | `False` | Enable GPU acceleration |
-| `--host` | `0.0.0.0` | Server host |
-| `--port` | `8000` | Server port |
-| `--workers` | `1` | Number of workers |
+Every setting can be given as a CLI flag or an environment variable. Flags take
+precedence over environment variables, which take precedence over the defaults
+in `api/server.py`.
+
+| Argument | Environment variable | Default | Description |
+|----------|----------------------|---------|-------------|
+| `--index_path` | `INDEX_PATH` | see `api/server.py` | FAISS index file |
+| `--output_dir` | `OUTPUT_DIR` | see `api/server.py` | Mappings directory |
+| `--passages_dir` | `PASSAGES_DIR` | see `api/server.py` | Passage JSONL files |
+| `--documents_dir` | `DOCUMENTS_DIR` | see `api/server.py` | Document JSONL files |
+| `--model_name` | `MODEL_NAME` | `facebook/contriever-msmarco` | HuggingFace model |
+| `--nprobe` | `NPROBE` | `256` | FAISS nprobe value |
+| `--use_gpu` / `--no-use_gpu` | `USE_GPU` | `true` | FAISS on GPU |
+| `--load_reranker` / `--no-load_reranker` | `LOAD_RERANKER` | `true` | Load cross-encoder re-ranker |
+| `--host` | — | `0.0.0.0` | Server host |
+| `--port` | — | `8000` | Server port |
+| `--workers` | — | `1` | Number of workers |
 
 ### Limits
 
-- **Max k**: 100 (configurable in `api.py`)
+- **Max k**: 100 (`MAX_K` in `api/server.py`)
 - **Empty queries**: Returns empty results list
 
 ## Interactive API Documentation
@@ -260,7 +268,7 @@ Re-ranking uses `BAAI/bge-reranker-v2-m3` cross-encoder model to improve result 
 - **Enabled** (default): Better accuracy, +10-50ms latency
 - **Disabled**: Faster, uses only FAISS scores
 
-**Disable globally:** Start server with `--load_reranker=false` or set env `LOAD_RERANKER=false`
+**Disable globally:** start the server with `--no-load_reranker`, or set `LOAD_RERANKER=false` in the environment.
 
 ## Document Ranking
 
@@ -291,7 +299,7 @@ To change: Edit `api/server.py` line with `rank_documents_by_occurrence()`.
 
 **Server won't start:**
 - Check if port 8000 is available: `lsof -i :8000`
-- Try different port: `python api.py --port 8001`
+- Try a different port: `python -m api.server --port 8001`
 
 **GPU not detected:**
 - Verify CUDA available: `python -c "import torch; print(torch.cuda.is_available())"`
@@ -299,7 +307,7 @@ To change: Edit `api/server.py` line with `rank_documents_by_occurrence()`.
 
 **Out of memory:**
 - Reduce workers: `--workers 1`
-- Use CPU: Remove `--use_gpu` flag
+- Use CPU: pass `--no-use_gpu`
 
 ## Development
 
@@ -310,7 +318,7 @@ pip install fastapi uvicorn torch transformers faiss-gpu numpy
 
 Run in development mode:
 ```bash
-uvicorn api:app --reload --host 0.0.0.0 --port 8000
+uvicorn api.server:app --reload --host 0.0.0.0 --port 8000
 ```
 
 
@@ -318,8 +326,6 @@ uvicorn api:app --reload --host 0.0.0.0 --port 8000
 
 For 8 workers, the service is using 303GB of memory and 54GB VRAM per GPU.
 For 16 workers, the service will use 600GB of memory and 108GB VRAM per GPU.
-
-This is doable. Lets test this.
 
 ## Running with SLURM
 
@@ -346,9 +352,9 @@ The SLURM script creates a JSON file to track server status:
 **Format:**
 ```json
 {
-  "host": "fs-mbz-gpu-757",
+  "host": "compute-node-01",
   "port": 8000,
-  "url": "http://fs-mbz-gpu-757:8000",
+  "url": "http://compute-node-01:8000",
   "job_id": "12345",
   "status": "ready",
   "started_at": "2025-10-06T10:30:00+00:00",
