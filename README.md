@@ -1,7 +1,6 @@
-# pretrainseer
+# PretrainSeer
 
-Billion-scale passage retrieval over pretraining corpora — FAISS-backed semantic
-search across 1.6B passages, with a served REST API and cross-encoder re-ranking.
+Search and inspect billions of documents in your pretraining corpus.
 
 ## Overview
 

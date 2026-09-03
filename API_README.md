@@ -1,4 +1,4 @@
-# pretrainseer — API Reference
+# PretrainSeer — API Reference
 
 FastAPI service for searching passages and retrieving source documents.
 
