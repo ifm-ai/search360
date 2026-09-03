@@ -11,6 +11,12 @@ This project provides:
 - **FastAPI service**: REST API for passage and document retrieval
 - **Load testing**: Comprehensive benchmarking tools
 
+## Where This Is Used
+
+Search360 was used to generate synthetic training data at billion-token scale for
+the [K2 Horizon](https://huggingface.co/collections/IFM/k2-horizon) family of
+models, which spans 0.9B to 375B parameters.
+
 ## Quick Start
 
 ### 1. Install Dependencies
@@ -286,7 +292,7 @@ The indexed corpus is not distributed with this repository.
 
 ## Citation
 
-This work builds on the retrieval setup described in:
+If you use Search360, please cite the retrieval setup it builds on:
 
 > Xinxi Lyu, Michael Duan, Rulin Shao, Pang Wei Koh, and Sewon Min.
 > *Frustratingly Simple Retrieval Improves Challenging, Reasoning-Intensive Benchmarks.*
