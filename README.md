@@ -226,6 +226,8 @@ curl -X POST http://localhost:8000/search \
 
 Response includes both `score` (FAISS similarity) and `rerank_score` (cross-encoder score).
 
+[benchmark link](https://claude.ai/public/artifacts/44a9a06f-3860-48cc-8e91-bf4b20c91ce5)
+
 ## License
 
 Internal research project.

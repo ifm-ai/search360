@@ -120,29 +120,47 @@ def main(args):
     # Calculate file chunk for this job
     total_files = len(passage_filenames)
     if args.job_id is not None and args.total_jobs is not None:
-        files_per_job = total_files // args.total_jobs
-        remainder = total_files % args.total_jobs
+        if args.strided:
+            # Strided assignment: job 0 gets files 0, N, 2N, ...; job 1 gets files 1, N+1, 2N+1, ...
+            # This naturally distributes big/small files across jobs
+            job_files = passage_filenames[args.job_id::args.total_jobs]
+            file_indices = list(range(args.job_id, total_files, args.total_jobs))
 
-        # Distribute remainder files to first jobs
-        if args.job_id < remainder:
-            start_idx = args.job_id * (files_per_job + 1)
-            end_idx = start_idx + files_per_job + 1
+            print(f"\n{'='*80}")
+            print(f"SLURM JOB CONFIGURATION (STRIDED)")
+            print(f"{'='*80}")
+            print(f"  Job ID: {args.job_id}")
+            print(f"  Total jobs: {args.total_jobs}")
+            print(f"  Total files: {total_files}")
+            print(f"  This job processes {len(job_files)} files (strided: every {args.total_jobs}th file starting at {args.job_id})")
+            print(f"  First few file indices: {file_indices[:5]}...")
+
+            passage_filenames = job_files
         else:
-            start_idx = args.job_id * files_per_job + remainder
-            end_idx = start_idx + files_per_job
+            # Original contiguous chunk assignment
+            files_per_job = total_files // args.total_jobs
+            remainder = total_files % args.total_jobs
 
-        # Get this job's file chunk
-        passage_filenames = passage_filenames[start_idx:end_idx]
+            # Distribute remainder files to first jobs
+            if args.job_id < remainder:
+                start_idx = args.job_id * (files_per_job + 1)
+                end_idx = start_idx + files_per_job + 1
+            else:
+                start_idx = args.job_id * files_per_job + remainder
+                end_idx = start_idx + files_per_job
 
-        print(f"\n{'='*80}")
-        print(f"SLURM JOB CONFIGURATION")
-        print(f"{'='*80}")
-        print(f"  Job ID: {args.job_id}")
-        print(f"  Total jobs: {args.total_jobs}")
-        print(f"  Total files: {total_files}")
-        print(
-            f"  This job processes files: [{start_idx}:{end_idx}] ({len(passage_filenames)} files)"
-        )
+            # Get this job's file chunk
+            passage_filenames = passage_filenames[start_idx:end_idx]
+
+            print(f"\n{'='*80}")
+            print(f"SLURM JOB CONFIGURATION")
+            print(f"{'='*80}")
+            print(f"  Job ID: {args.job_id}")
+            print(f"  Total jobs: {args.total_jobs}")
+            print(f"  Total files: {total_files}")
+            print(
+                f"  This job processes files: [{start_idx}:{end_idx}] ({len(passage_filenames)} files)"
+            )
 
     print(f"\nConfiguration:")
     print(f"  Passages dir: {passages_dir}")
@@ -232,7 +250,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--model_name",
         type=str,
-        default="facebook/contriever",
+        default="facebook/contriever-msmarco",
         help="HuggingFace model name for embeddings",
     )
 
@@ -276,6 +294,13 @@ if __name__ == "__main__":
         "--local_files_only",
         action="store_true",
         help="Use only locally cached models (no network calls)",
+    )
+
+    parser.add_argument(
+        "--strided",
+        action="store_true",
+        help="Use strided file assignment instead of contiguous chunks. "
+             "This distributes files more evenly across jobs when file sizes vary.",
     )
 
     args = parser.parse_args()

@@ -270,7 +270,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--index_path",
         type=str,
-        default="/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_data/outputs/index_faiss/final_index.faiss",
+        default="/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_high_quality_data/index_faiss_msmarco/final_index.faiss",
         help="Path to FAISS index",
     )
 
@@ -284,14 +284,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "--passages_dir",
         type=str,
-        default="/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_data/outputs/passages",
+        default="/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_high_quality_data/passages",
         help="Directory containing passage JSONL files",
     )
 
     parser.add_argument(
         "--documents_dir",
         type=str,
-        default="/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_data/outputs/documents_jsonl",
+        default="/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_high_quality_data/raw_high_data",
         help="Directory containing document JSONL files",
     )
 
@@ -332,7 +332,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--mappings_output_dir",
         type=str,
-        default="/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_data/outputs",
+        default="/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_high_quality_data",
         help="Directory containing mapping files (mappings_passages/, index/)",
     )
 

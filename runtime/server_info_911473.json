@@ -1,9 +1,0 @@
-{
-  "host": "fs-mbz-gpu-402",
-  "port": 8000,
-  "url": "http://fs-mbz-gpu-402:8000",
-  "job_id": "911473",
-  "status": "ready",
-  "started_at": "2025-10-06T21:05:01+00:00",
-  "ready_at": "2025-10-06T21:05:01+00:00"
-}

@@ -3,3 +3,6 @@ outputs/*
 .conda/*
 logs/*
 *.pyc
+load_test_results*
+runtime/*
+CLAUDE.md

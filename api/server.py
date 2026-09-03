@@ -11,7 +11,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict
 
-from api.search import load_search_system, embed_query, get_passage, get_document
+from api.search import load_search_system, embed_query, get_passage, get_document, get_passages_parallel, _resolve_k_fetch
 from api.utils import rank_documents_by_occurrence
 import numpy as np
 
@@ -28,22 +28,22 @@ def get_default_args():
         def __init__(self):
             self.index_path = os.getenv(
                 "INDEX_PATH",
-                "/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_data/outputs/index_faiss/final_index.faiss",
+                "/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_high_quality_data/index_faiss_msmarco/final_index.faiss",
             )
             self.output_dir = os.getenv(
                 "OUTPUT_DIR",
-                "/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_data/outputs",
+                "/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_high_quality_data",
             )
             self.passages_dir = os.getenv(
                 "PASSAGES_DIR",
-                "/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_data/outputs/passages",
+                "/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_high_quality_data/passages",
             )
             self.documents_dir = os.getenv(
                 "DOCUMENTS_DIR",
-                "/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_data/outputs/documents_jsonl",
+                "/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_high_quality_data/raw_high_data",
             )
-            self.model_name = os.getenv("MODEL_NAME", "facebook/contriever")
-            self.nprobe = int(os.getenv("NPROBE", "2048"))
+            self.model_name = os.getenv("MODEL_NAME", "facebook/contriever-msmarco")
+            self.nprobe = int(os.getenv("NPROBE", "256"))
             self.use_gpu = os.getenv("USE_GPU", "true").lower() == "true"
             self.load_reranker = os.getenv("LOAD_RERANKER", "true").lower() == "true"
 
@@ -74,7 +74,8 @@ class SearchRequest(BaseModel):
     k: int = Field(10, description="Number of results to return", ge=1, le=MAX_K)
     return_fulltext: bool = Field(False, description="Return full source documents")
     rerank: bool = Field(True, description="Use re-ranking to improve results")
-    initial_k: int = Field(25, description="Number of passages to retrieve before re-ranking", ge=1, le=100)
+    initial_k: int = Field(25, description="Number of passages to retrieve before re-ranking", ge=1, le=1000)
+    min_words: Optional[int] = Field(None, description="Minimum words required in passage (filter short passages)")
 
 
 class PassageResult(BaseModel):
@@ -193,34 +194,50 @@ async def search(request: SearchRequest):
         request.query, SEARCH_SYSTEM["model"], SEARCH_SYSTEM["tokenizer"]
     )
 
-    # Search index - retrieve more if re-ranking
-    search_k = request.initial_k if request.rerank else request.k
+    # Calculate fetch size - scale up if min_words filter is applied
+    base_k = request.initial_k if request.rerank else request.k
+    fetch_k = _resolve_k_fetch(base_k, request.min_words)
+
+    # Search index
     scores, passage_ids = SEARCH_SYSTEM["index"].search(
-        query_embedding.astype(np.float32), search_k
+        query_embedding.astype(np.float32), fetch_k
     )
 
-    # Retrieve passages
+    # Retrieve passages in parallel (with optional min_words filter)
+    raw_passages = get_passages_parallel(
+        passage_ids[0].tolist(),
+        SEARCH_SYSTEM,
+        min_words=request.min_words
+    )
+
+    # Build results with scores
+    pid_to_score = {int(pid): float(scores[0][i]) for i, pid in enumerate(passage_ids[0])}
+
     passage_results = []
-    for i, passage_id in enumerate(passage_ids[0]):
-        score = scores[0][i]
-
-        # Get passage
-        passage, psg_filename, psg_position = get_passage(passage_id, SEARCH_SYSTEM)
-
-        # Get source document ID
-        doc_id = SEARCH_SYSTEM["passage_to_doc_id"][passage_id]
+    for passage, psg_filename, psg_position, passage_id in raw_passages:
+        score = pid_to_score.get(passage_id, 0.0)
+        doc_id = int(SEARCH_SYSTEM["passage_to_doc_id"][passage_id])
 
         result = {
-            "rank": i + 1,
-            "score": float(score),
+            "rank": len(passage_results) + 1,
+            "score": score,
             "passage_id": int(passage_id),
             "passage_text": passage["text"],
             "passage_file": psg_filename,
             "passage_position": int(psg_position),
-            "doc_id": int(doc_id),
+            "doc_id": doc_id,
         }
 
         passage_results.append(result)
+
+        # Stop if we have enough results
+        if len(passage_results) >= base_k:
+            break
+
+    # Sort by score and update ranks
+    passage_results.sort(key=lambda x: x["score"], reverse=True)
+    for i, r in enumerate(passage_results):
+        r["rank"] = i + 1
 
     # Re-rank if requested and model is loaded
     if request.rerank and SEARCH_SYSTEM["reranker_model"] is not None:
@@ -286,40 +303,40 @@ def main():
     parser.add_argument(
         "--index_path",
         type=str,
-        default="/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_data/outputs/index_faiss/final_index.faiss",
+        default="/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_high_quality_data/index_faiss_msmarco/final_index.faiss",
         help="Path to FAISS index",
     )
 
     parser.add_argument(
         "--output_dir",
         type=str,
-        default="/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_data/outputs",
+        default="/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_high_quality_data",
         help="Directory containing mappings",
     )
 
     parser.add_argument(
         "--passages_dir",
         type=str,
-        default="/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_data/outputs/passages",
+        default="/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_high_quality_data/passages",
         help="Directory containing passage JSONL files",
     )
 
     parser.add_argument(
         "--documents_dir",
         type=str,
-        default="/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_data/outputs/documents_jsonl",
+        default="/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_high_quality_data/raw_high_data",
         help="Directory containing document JSONL files",
     )
 
     parser.add_argument(
         "--model_name",
         type=str,
-        default="facebook/contriever",
-        help="HuggingFace model name",
+        default="facebook/contriever-msmarco",
+        help="HuggingFace model name (MS MARCO fine-tuned)",
     )
 
     parser.add_argument(
-        "--nprobe", type=int, default=2048, help="Number of clusters to probe"
+        "--nprobe", type=int, default=256, help="Number of clusters to probe (ds-serve default)"
     )
 
     parser.add_argument(

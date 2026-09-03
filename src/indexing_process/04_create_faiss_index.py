@@ -294,7 +294,8 @@ def main(args):
 
     # Setup paths
     embeddings_dir = Path(args.embeddings_dir)
-    output_dir = Path(args.output_dir) / "index_faiss"
+    index_subdir = args.index_subdir if args.index_subdir else "index_faiss"
+    output_dir = Path(args.output_dir) / index_subdir
     output_dir.mkdir(parents=True, exist_ok=True)
 
     trained_index_path = output_dir / "trained_index.faiss"
@@ -397,7 +398,14 @@ if __name__ == "__main__":
         "--output_dir",
         type=str,
         default="/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_data/outputs",
-        help="Output directory (index will be saved to output_dir/index_faiss/)",
+        help="Output directory (index will be saved to output_dir/index_subdir/)",
+    )
+
+    parser.add_argument(
+        "--index_subdir",
+        type=str,
+        default=None,
+        help="Subdirectory name for index (default: index_faiss)",
     )
 
     parser.add_argument(

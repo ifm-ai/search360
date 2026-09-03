@@ -4,14 +4,26 @@ Interactive search interface for FAISS index.
 Retrieves relevant passages given user queries.
 """
 
+import os
 import json
 import argparse
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 import torch
 import faiss
-from transformers import AutoTokenizer, AutoModel, AutoModelForSequenceClassification
+from transformers import AutoTokenizer, AutoModel
+
+# Configure FAISS/BLAS thread count (default: 128)
+FAISS_THREADS = int(os.environ.get("FAISS_OMP_THREADS", "128"))
+try:
+    faiss.omp_set_num_threads(FAISS_THREADS)
+except Exception:
+    pass
+os.environ["OMP_NUM_THREADS"] = str(FAISS_THREADS)
+os.environ["MKL_NUM_THREADS"] = str(FAISS_THREADS)
+os.environ["TOKENIZERS_PARALLELISM"] = "true"
 
 
 def mean_pooling(token_embeddings, mask):
@@ -54,6 +66,22 @@ def load_search_system(args):
     index.nprobe = args.nprobe
     print(f"✓ Index loaded: {index.ntotal:,} passages")
 
+    # Enable direct map for index reconstruction (useful for reranking)
+    try:
+        if hasattr(index, "make_direct_map"):
+            index.make_direct_map()
+            print(f"✓ Direct map enabled on index")
+        else:
+            # Try to extract inner IVF and enable direct map
+            try:
+                ivf = faiss.extract_index_ivf(index)
+                ivf.make_direct_map()
+                print(f"✓ Direct map enabled via extract_index_ivf()")
+            except Exception:
+                print(f"⚠ Could not enable direct map (reconstruct may not work)")
+    except Exception as e:
+        print(f"⚠ Failed to enable direct map: {e}")
+
     # Move index to GPU(s) if available
     if args.use_gpu and faiss.get_num_gpus() > 0:
         print(f"\nMoving index to GPU...")
@@ -78,30 +106,32 @@ def load_search_system(args):
     else:
         print(f"Using CPU for search (use --use_gpu to enable GPU)")
 
-    # Load passage mappings
+    # Load passage mappings (using memory mapping for large arrays)
     mappings_dir = Path(args.output_dir) / "mappings_passages"
     print(f"\nLoading passage mappings from {mappings_dir}...")
 
     passage_filenames = np.load(
         mappings_dir / "passage_filenames.npy", allow_pickle=True
     )
-    passage_id_to_file_id = np.load(mappings_dir / "passage_id_to_file_id.npy")
-    passage_pos_id_array = np.load(mappings_dir / "passage_pos_id_array.npy")
-    passage_to_doc_id = np.load(mappings_dir / "passage_to_doc_id.npy")
+    # Use memory mapping for large arrays to reduce RAM usage
+    passage_id_to_file_id = np.load(mappings_dir / "passage_id_to_file_id.npy", mmap_mode="r")
+    passage_pos_id_array = np.load(mappings_dir / "passage_pos_id_array.npy", mmap_mode="r")
+    passage_to_doc_id = np.load(mappings_dir / "passage_to_doc_id.npy", mmap_mode="r")
 
-    print(f"✓ Loaded passage mappings")
+    print(f"✓ Loaded passage mappings (memory-mapped)")
     print(f"  - {len(passage_filenames)} passage files")
     print(f"  - {len(passage_id_to_file_id):,} passage mappings")
 
-    # Load document mappings
+    # Load document mappings (using memory mapping for large arrays)
     doc_mappings_dir = Path(args.output_dir) / "index"
     print(f"\nLoading document mappings from {doc_mappings_dir}...")
 
     doc_filenames = np.load(doc_mappings_dir / "doc_filenames.npy", allow_pickle=True)
-    doc_id_to_file_id = np.load(doc_mappings_dir / "doc_id_to_file_id.npy")
-    doc_pos_id_array = np.load(doc_mappings_dir / "doc_pos_id_array.npy")
+    # Use memory mapping for large arrays to reduce RAM usage
+    doc_id_to_file_id = np.load(doc_mappings_dir / "doc_id_to_file_id.npy", mmap_mode="r")
+    doc_pos_id_array = np.load(doc_mappings_dir / "doc_pos_id_array.npy", mmap_mode="r")
 
-    print(f"✓ Loaded document mappings")
+    print(f"✓ Loaded document mappings (memory-mapped)")
     print(f"  - {len(doc_filenames)} document files")
     print(f"  - {len(doc_id_to_file_id):,} documents")
 
@@ -123,9 +153,14 @@ def load_search_system(args):
     reranker_tokenizer = None
 
     if hasattr(args, 'load_reranker') and args.load_reranker:
-        print(f"\nLoading re-ranker model: BAAI/bge-reranker-v2-m3...")
-        reranker_tokenizer = AutoTokenizer.from_pretrained('BAAI/bge-reranker-v2-m3')
-        reranker_model = AutoModelForSequenceClassification.from_pretrained('BAAI/bge-reranker-v2-m3')
+        reranker_name = "jinaai/jina-reranker-v3"
+        print(f"\nLoading re-ranker model: {reranker_name}...")
+        reranker_model = AutoModel.from_pretrained(
+            reranker_name,
+            torch_dtype=torch.float16,
+            trust_remote_code=True,
+            tie_word_embeddings=False
+        )
 
         if torch.cuda.is_available():
             reranker_model = reranker_model.to("cuda")
@@ -156,17 +191,70 @@ def load_search_system(args):
 def get_passage(passage_id, system):
     """Retrieve passage text and metadata given passage_id."""
     # Get passage file and position
-    file_id = system["passage_id_to_file_id"][passage_id]
+    file_id = int(system["passage_id_to_file_id"][passage_id])
     filename = system["passage_filenames"][file_id]
-    position = system["passage_pos_id_array"][passage_id]
+    position = int(system["passage_pos_id_array"][passage_id])
 
     # Read passage from file
     filepath = system["passages_dir"] / filename
-    with open(filepath, "r") as f:
+    with open(filepath, "rb") as f:
         f.seek(position)
-        passage = json.loads(f.readline())
+        line = f.readline().decode('utf-8', errors='strict')
+        passage = json.loads(line)
 
     return passage, filename, position
+
+
+# Number of threads for parallel passage retrieval
+PASSAGE_READ_THREADS = int(os.environ.get("PASSAGE_READ_THREADS", "24"))
+
+
+def get_passages_parallel(passage_ids, system, min_words=None):
+    """Retrieve multiple passages in parallel.
+
+    Args:
+        passage_ids: List of passage IDs to retrieve
+        system: System dict with mappings
+        min_words: Minimum number of words required (filter short passages)
+
+    Returns:
+        List of (passage, filename, position) tuples
+    """
+    def fetch_single_passage(passage_id):
+        try:
+            file_id = int(system["passage_id_to_file_id"][passage_id])
+            filename = system["passage_filenames"][file_id]
+            position = int(system["passage_pos_id_array"][passage_id])
+
+            filepath = system["passages_dir"] / filename
+            with open(filepath, "rb") as f:
+                f.seek(position)
+                line = f.readline().decode('utf-8', errors='strict')
+                passage = json.loads(line)
+
+            return (passage, filename, position, passage_id)
+        except Exception as e:
+            print(f"[WARN] Failed to read passage_id={passage_id}: {e}")
+            return None
+
+    results = []
+    with ThreadPoolExecutor(max_workers=PASSAGE_READ_THREADS) as pool:
+        futures = [pool.submit(fetch_single_passage, pid) for pid in passage_ids]
+        for fut in futures:
+            try:
+                result = fut.result()
+                if result is not None:
+                    passage, filename, position, pid = result
+                    # Apply minimum words filter if specified
+                    if min_words is not None and min_words > 0:
+                        text = (passage.get("text") or "").strip()
+                        if len(text.split()) < min_words:
+                            continue
+                    results.append((passage, filename, position, pid))
+            except Exception as e:
+                print(f"[WARN] Failed to get passage result: {e}")
+
+    return results
 
 
 def get_document(doc_id, system):
@@ -186,43 +274,33 @@ def get_document(doc_id, system):
 
 
 def rerank_passages(query, passages, system):
-    """Re-rank passages using BGE re-ranker model.
+    """Re-rank passages using Jina re-ranker v3.
 
     Args:
         query: Search query string
         passages: List of dicts with 'passage_text' and other metadata
-        system: System dict containing reranker_model and reranker_tokenizer
+        system: System dict containing reranker_model
 
     Returns:
         Re-ranked list of passages with added 'rerank_score' field
     """
-    if system["reranker_model"] is None or system["reranker_tokenizer"] is None:
+    if system["reranker_model"] is None:
         # Re-ranker not loaded, return passages as-is
         return passages
 
-    # Prepare pairs: [(query, passage_text), ...]
-    pairs = [[query, p["passage_text"]] for p in passages]
+    # Extract document texts for reranking
+    documents = [p["passage_text"] for p in passages]
 
-    # Get re-ranking scores
-    with torch.no_grad():
-        inputs = system["reranker_tokenizer"](
-            pairs,
-            padding=True,
-            truncation=True,
-            return_tensors='pt',
-            max_length=512
-        )
+    # Use Jina reranker's built-in rerank method
+    results = system["reranker_model"].rerank(query, documents, top_n=len(documents))
 
-        # Move to GPU if available
-        device = next(system["reranker_model"].parameters()).device
-        inputs = {k: v.to(device) for k, v in inputs.items()}
-
-        scores = system["reranker_model"](**inputs, return_dict=True).logits.view(-1).float()
-        scores = scores.cpu().numpy()
+    # Create a mapping from document text to rerank score
+    # Results are sorted by relevance, so we need to map back
+    doc_to_score = {r["document"]: r["relevance_score"] for r in results}
 
     # Add rerank scores to passages
-    for passage, score in zip(passages, scores):
-        passage["rerank_score"] = float(score)
+    for passage in passages:
+        passage["rerank_score"] = float(doc_to_score.get(passage["passage_text"], 0.0))
 
     # Sort by rerank score (descending)
     reranked = sorted(passages, key=lambda x: x["rerank_score"], reverse=True)
@@ -234,7 +312,24 @@ def rerank_passages(query, passages, system):
     return reranked
 
 
-def search(query, system, k=5, rerank=False, initial_k=25):
+import math
+
+
+def _resolve_k_fetch(requested_k: int, min_words: int = None, hard_cap: int = 256) -> int:
+    """Calculate how many results to fetch when min_words filter is applied.
+
+    When filtering short passages, we need to fetch more to ensure we have enough
+    results after filtering.
+    """
+    base = max(1, int(requested_k))
+    if min_words is None or min_words <= 0:
+        return base
+    # Scale factor based on min_words threshold
+    factor = 1 + min(4, max(1, math.ceil(min_words / 50)))
+    return min(hard_cap, base * factor)
+
+
+def search(query, system, k=5, rerank=False, initial_k=25, min_words=None):
     """Search for top-k relevant passages.
 
     Args:
@@ -243,6 +338,7 @@ def search(query, system, k=5, rerank=False, initial_k=25):
         k: Number of final results to return
         rerank: Whether to use re-ranking (default: False)
         initial_k: Number of passages to retrieve before re-ranking (default: 25)
+        min_words: Minimum words required in passage (filter short passages)
 
     Returns:
         List of search results (re-ranked if rerank=True)
@@ -250,36 +346,55 @@ def search(query, system, k=5, rerank=False, initial_k=25):
     # Create query embedding
     query_embedding = embed_query(query, system["model"], system["tokenizer"])
 
-    # Search index - retrieve more if re-ranking
-    search_k = initial_k if rerank else k
-    scores, passage_ids = system["index"].search(query_embedding.astype(np.float32), search_k)
+    # Calculate how many to fetch - scale up if min_words filter is applied
+    base_k = initial_k if rerank else k
+    fetch_k = _resolve_k_fetch(base_k, min_words)
 
-    # Retrieve passages and documents
+    # Search index
+    scores, passage_ids = system["index"].search(query_embedding.astype(np.float32), fetch_k)
+
+    # Retrieve passages in parallel
+    passage_results = get_passages_parallel(
+        passage_ids[0].tolist(),
+        system,
+        min_words=min_words
+    )
+
+    # Build results with scores
     results = []
-    for i, passage_id in enumerate(passage_ids[0]):
-        score = scores[0][i]
+    # Create a mapping of passage_id to score
+    pid_to_score = {int(pid): float(scores[0][i]) for i, pid in enumerate(passage_ids[0])}
 
-        # Get passage
-        passage, psg_filename, psg_position = get_passage(passage_id, system)
+    for passage, psg_filename, psg_position, passage_id in passage_results:
+        score = pid_to_score.get(passage_id, 0.0)
 
         # Get source document
-        doc_id = system["passage_to_doc_id"][passage_id]
+        doc_id = int(system["passage_to_doc_id"][passage_id])
         document, doc_filename, doc_position = get_document(doc_id, system)
 
         results.append(
             {
-                "rank": i + 1,
-                "score": float(score),
+                "rank": len(results) + 1,
+                "score": score,
                 "passage_id": int(passage_id),
                 "passage_text": passage["text"],
                 "passage_file": psg_filename,
                 "passage_position": int(psg_position),
-                "doc_id": int(doc_id),
+                "doc_id": doc_id,
                 "doc_text": document.get("text", ""),
                 "doc_file": doc_filename,
                 "doc_position": int(doc_position),
             }
         )
+
+        # Stop if we have enough results
+        if len(results) >= base_k:
+            break
+
+    # Sort by score (highest first) and update ranks
+    results.sort(key=lambda x: x["score"], reverse=True)
+    for i, r in enumerate(results):
+        r["rank"] = i + 1
 
     # Re-rank if requested
     if rerank and system["reranker_model"] is not None:
@@ -369,35 +484,35 @@ if __name__ == "__main__":
     parser.add_argument(
         "--index_path",
         type=str,
-        default="/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_data/outputs/index_faiss/final_index.faiss",
+        default="/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_high_quality_data/index_faiss_msmarco/final_index.faiss",
         help="Path to FAISS index",
     )
 
     parser.add_argument(
         "--output_dir",
         type=str,
-        default="/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_data/outputs",
+        default="/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_high_quality_data",
         help="Output directory containing mappings",
     )
 
     parser.add_argument(
         "--passages_dir",
         type=str,
-        default="/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_data/outputs/passages",
+        default="/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_high_quality_data/passages",
         help="Directory containing passage JSONL files",
     )
 
     parser.add_argument(
         "--documents_dir",
         type=str,
-        default="/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_data/outputs/documents_jsonl",
+        default="/mnt/weka/shrd/k2m/shaurya.rohatgi/faster_index_high_quality_data/raw_high_data",
         help="Directory containing document JSONL files",
     )
 
     parser.add_argument(
         "--model_name",
         type=str,
-        default="facebook/contriever",
+        default="facebook/contriever-msmarco",
         help="HuggingFace model name for query encoding",
     )
 
@@ -408,8 +523,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--nprobe",
         type=int,
-        default=2048,
-        help="Number of clusters to probe during search",
+        default=256,
+        help="Number of clusters to probe during search (ds-serve default)",
     )
 
     parser.add_argument(

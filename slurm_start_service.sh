@@ -6,8 +6,8 @@
 #SBATCH --time=12000:00:00
 #SBATCH --output=logs/service_%j.out
 #SBATCH --error=logs/service_%j.err
-# --partition=lowprio
-# --qos=lowprio
+#--partition=lowprio
+#--qos=lowprio
 # --reservation=moe
 
 # Create directories if they don't exist
@@ -69,7 +69,7 @@ export USE_GPU=true
     --use_gpu \
     --host 0.0.0.0 \
     --port $PORT \
-    --workers 16 &
+    --workers 8 &
 
 SERVER_PID=$!
 
