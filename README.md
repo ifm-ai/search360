@@ -304,6 +304,8 @@ This work builds on the retrieval setup described in:
 
 ## License
 
+Copyright 2026 Mohamed bin Zayed University of Artificial Intelligence (MBZUAI).
+
 Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for the
 full text.
 
